@@ -93,15 +93,22 @@ impl Executor {
     /// Rebalance the executor. Can/should be called from a monitor thread.
     pub fn rebalance(&self) {
         let mut stealers = self.stealers.lock().unwrap();
-        let biggest_catch = stealers.iter_mut().max_by_key(|(_, st)| st.stealable());
-        if let Some((idx, stealer)) = biggest_catch {
-            let mut stolen = Vec::with_capacity(256);
+        let mut stolen = Vec::with_capacity(16);
+        for (_, stealer) in stealers.iter_mut() {
             stealer.steal_batch(&mut stolen);
-            log::debug!("stealing {} tasks from idx {}", idx, stolen.len());
-            for stolen in stolen {
-                self.global_queue.push(stolen).unwrap();
+            if !stolen.is_empty() {
+                break;
             }
-            self.global_notifier.notify_additional(1);
+        }
+        for stolen in stolen {
+            self.global_queue.push(stolen).unwrap();
+        }
+        self.global_notifier.notify_additional(1);
+        if fastrand::f32() < 0.01 {
+            log::debug!("{} in global queue", self.global_queue.len());
+            for (idx, stealer) in stealers.iter() {
+                log::debug!("{} in local queue {}", stealer.stealable(), idx)
+            }
         }
     }
 }
