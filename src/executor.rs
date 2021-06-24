@@ -94,10 +94,19 @@ impl Executor {
     pub fn rebalance(&self) {
         let mut stealers = self.stealers.lock().unwrap();
         let mut stolen = Vec::with_capacity(16);
-        for (_, stealer) in stealers.iter_mut() {
+        let random_start = fastrand::usize(0..stealers.len());
+        for (_, stealer) in stealers.iter_mut().skip(random_start) {
             stealer.steal_batch(&mut stolen);
             if !stolen.is_empty() {
                 break;
+            }
+        }
+        if stolen.is_empty() {
+            for (_, stealer) in stealers.iter_mut().take(random_start) {
+                stealer.steal_batch(&mut stolen);
+                if !stolen.is_empty() {
+                    break;
+                }
             }
         }
         for stolen in stolen {
