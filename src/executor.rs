@@ -93,6 +93,9 @@ impl Executor {
     /// Rebalance the executor. Can/should be called from a monitor thread.
     pub fn rebalance(&self) {
         let mut stealers = self.stealers.lock().unwrap();
+        if stealers.is_empty() {
+            return;
+        }
         let mut stolen = Vec::with_capacity(16);
         let random_start = fastrand::usize(0..stealers.len());
         for (_, stealer) in stealers.iter_mut().skip(random_start) {
