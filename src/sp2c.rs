@@ -4,7 +4,7 @@ use rtrb::PushError;
 
 /// Create a new sp2c
 pub fn sp2c<T>() -> (Sp2cSender<T>, Sp2cReceiver<T>, Sp2cStealer<T>) {
-    let ring = rtrb::RingBuffer::new(512);
+    let ring = rtrb::RingBuffer::new(256);
     let (send, recv) = ring.split();
     let recv = Arc::new(spin::Mutex::new(recv));
     let sender = Sp2cSender { send };
@@ -19,11 +19,16 @@ pub struct Sp2cSender<T> {
 }
 
 impl<T> Sp2cSender<T> {
-    // Sends to the other side. If the queue is full, the item is returned back.
+    /// Sends to the other side. If the queue is full, the item is returned back.
     pub fn send(&mut self, item: T) -> Result<(), T> {
         self.send.push(item).map_err(|v| match v {
             PushError::Full(v) => v,
         })
+    }
+
+    /// Length
+    pub fn slots(&mut self) -> usize {
+        self.send.slots()
     }
 }
 
@@ -33,7 +38,7 @@ pub struct Sp2cReceiver<T> {
 }
 
 impl<T> Sp2cReceiver<T> {
-    // Pops an item from the queue. If the queue is empty, returns None.
+    /// Pops an item from the queue. If the queue is empty, returns None.
     pub fn pop(&mut self) -> Option<T> {
         self.recv.lock().pop().ok()
     }

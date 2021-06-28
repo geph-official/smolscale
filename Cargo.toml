@@ -28,3 +28,12 @@ rtrb="0.1.4"
 spin={version="0.9", default-features=false, features=["mutex", "spin_mutex"]}
 backtrace="0.3"
 fastrand="1"
+futures-intrusive = "0.4"
+
+[dev-dependencies]
+criterion = "0.3"
+async-global-executor="2"
+
+[[bench]]
+name = "my_benchmark"
+harness = false

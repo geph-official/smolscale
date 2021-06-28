@@ -6,6 +6,7 @@ use std::{
 use async_task::Runnable;
 use concurrent_queue::ConcurrentQueue;
 use event_listener::Event;
+use futures_intrusive::sync::ManualResetEvent;
 use futures_lite::{Future, FutureExt};
 use slab::Slab;
 
@@ -45,6 +46,9 @@ impl Executor {
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             // attempt to spawn onto the worker that last ran
             let local_success: Result<(), Runnable> = TLS.with(|tls| {
+                if fastrand::u8(0..100) == 0 {
+                    return Err(runnable);
+                }
                 if let Some(tls) = tls.borrow().as_ref() {
                     if !Arc::ptr_eq(&tls.global_queue, &global_queue) {
                         // shoot, does not belong to this executor
@@ -77,12 +81,12 @@ impl Executor {
     pub fn worker(&self) -> Worker {
         let (send, recv, stealer) = sp2c();
         let sender: UnsafeLocalSender = Arc::new(UnsafeCell::new(send));
-        let notifier = Arc::new(Event::new());
+        let notifier = Arc::new(ManualResetEvent::new(false));
         let worker_id = self.stealers.lock().unwrap().insert(stealer);
         Worker {
             worker_id,
             sender,
-            notifier,
+            local_notifier: notifier,
             global_notifier: self.global_notifier.clone(),
             receiver: recv,
             global_queue: self.global_queue.clone(),
@@ -133,7 +137,7 @@ type UnsafeLocalSender = Arc<UnsafeCell<Sp2cSender<Runnable>>>;
 
 struct TlsState {
     inner_sender: UnsafeLocalSender,
-    notifier: Arc<Event>,
+    local_notifier: Arc<ManualResetEvent>,
     global_queue: Arc<ConcurrentQueue<Runnable>>, // for identification purposes
 }
 
@@ -141,7 +145,7 @@ impl TlsState {
     unsafe fn schedule_local(&self, task: Runnable) -> Result<(), Runnable> {
         let inner = &mut *self.inner_sender.get();
         inner.send(task)?;
-        self.notifier.notify_relaxed(1);
+        self.local_notifier.set();
         Ok(())
     }
 }
@@ -150,7 +154,7 @@ pub struct Worker {
     worker_id: usize,
 
     sender: UnsafeLocalSender,
-    notifier: Arc<Event>,
+    local_notifier: Arc<ManualResetEvent>,
     global_notifier: Arc<Event>,
     receiver: Sp2cReceiver<Runnable>,
     global_queue: Arc<ConcurrentQueue<Runnable>>,
@@ -170,18 +174,32 @@ impl Worker {
         self.set_tls();
         loop {
             let global = self.global_notifier.listen();
-            let local = self.notifier.listen();
             self.set_tls();
-            self.run_once();
+            while let Some(task) = self.run_once() {
+                task.run();
+            }
+            let local = self.local_notifier.wait();
             local.or(global).await;
-            log::trace!("notified");
+            self.local_notifier.reset();
         }
     }
 
-    fn run_once(&mut self) {
-        while let Some(task) = self.receiver.pop().or_else(|| self.global_queue.pop().ok()) {
-            task.run();
+    fn run_once(&mut self) -> Option<Runnable> {
+        if let Some(task) = self.receiver.pop() {
+            return Some(task);
         }
+        // SAFETY: cannot alias with TLS method
+        let sender = unsafe { &mut *self.sender.get() };
+        let steal_limit = sender.slots().min(self.global_queue.len() / 2);
+        let mut steal_count = 0;
+        while let Some(stolen) = self.global_queue.pop().ok() {
+            steal_count += 1;
+            sender.send(stolen).unwrap();
+            if steal_count >= steal_limit {
+                break;
+            }
+        }
+        self.receiver.pop()
     }
 
     fn set_tls(&mut self) {
@@ -190,7 +208,7 @@ impl Worker {
             if f.is_none() {
                 *f = Some(TlsState {
                     inner_sender: self.sender.clone(),
-                    notifier: self.notifier.clone(),
+                    local_notifier: self.local_notifier.clone(),
                     global_queue: self.global_queue.clone(),
                 });
             }
