@@ -80,6 +80,24 @@ fn yield_now(b: &mut criterion::Bencher) {
     });
 }
 
+// fn busy_loops(b: &mut criterion::Bencher) {
+//     b.iter(move || {
+//         future::block_on(async {
+//             let mut tasks = Vec::new();
+//             for _ in 0..TASKS {
+//                 tasks.push(spawn(async move {
+//                     std::thread::sleep(Duration::from_millis(10));
+//                     // let start = Instant::now();st
+//                     // while start.elapsed() < Duration::from_millis(100) {}
+//                 }));
+//             }
+//             for task in tasks {
+//                 task.await;
+//             }
+//         });
+//     });
+// }
+
 fn ping_pong(b: &mut criterion::Bencher) {
     const NUM_PINGS: usize = 1_000;
 
@@ -158,6 +176,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("spawn_one", spawn_one);
     c.bench_function("spawn_many", spawn_many);
     c.bench_function("yield_now", yield_now);
+    // c.bench_function("busy_loops", busy_loops);
     c.bench_function("ping_pong", ping_pong);
     c.bench_function("spawn_executors_recursively", spawn_executors_recursively);
     c.bench_function("context_switch_quiet", context_switch_quiet);

@@ -1,9 +1,6 @@
 use std::{
     cell::{RefCell, UnsafeCell},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use async_task::Runnable;
@@ -144,10 +141,12 @@ struct TlsState {
 }
 
 impl TlsState {
+    #[inline]
     unsafe fn schedule_local(&self, task: Runnable) -> Result<(), Runnable> {
         let inner = &mut *self.inner_sender.get();
         *self.counter.get() += 1;
-        if *self.counter.get() % 64 == 0 {
+        // occasionally, we intentionally fail to push tasks to the global queue. this improves fairness.
+        if *self.counter.get() % 256 == 0 {
             return Err(task);
         }
         inner.send(task)?;

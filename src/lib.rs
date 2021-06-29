@@ -47,6 +47,7 @@
 //!                         Performance has regressed.
 //!```
 
+use fastcounter::FastCounter;
 use futures_lite::prelude::*;
 use once_cell::sync::{Lazy, OnceCell};
 use std::{
@@ -54,26 +55,27 @@ use std::{
     sync::atomic::AtomicUsize,
     sync::atomic::{AtomicBool, Ordering},
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 mod executor;
+mod fastcounter;
 mod nursery;
 mod sp2c;
 pub use executor::*;
 pub use nursery::*;
 
 //const CHANGE_THRESH: u32 = 10;
-const MONITOR_MS: u64 = 10;
+const MONITOR_MS: u64 = 5;
 
-const MAX_THREADS: usize = 500;
+const MAX_THREADS: usize = 1500;
 
 // thread_local! {
 //     static LEXEC: Rc<async_executor::LocalExecutor<'static>> = Rc::new(async_executor::LocalExecutor::new())
 // }
 static EXEC: Lazy<Executor> = Lazy::new(Executor::new);
 
-static FUTURES_BEING_POLLED: AtomicUsize = AtomicUsize::new(0);
-static POLL_COUNT: AtomicUsize = AtomicUsize::new(0);
+static FUTURES_BEING_POLLED: Lazy<FastCounter> = Lazy::new(Default::default);
+static POLL_COUNT: Lazy<FastCounter> = Lazy::new(Default::default);
 
 static THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -107,6 +109,7 @@ fn monitor_loop() {
                 }
                 .into(),
             )
+            .stack_size(128 * 1024)
             .spawn(move || {
                 // let local_exec = LEXEC.with(|v| Rc::clone(v));
                 let future = async {
@@ -118,7 +121,7 @@ fn monitor_loop() {
                         EXEC.worker()
                             .run()
                             .or(async {
-                                async_io::Timer::after(Duration::from_secs(5)).await;
+                                async_io::Timer::after(Duration::from_secs(3)).await;
                             })
                             .await;
                     } else {
@@ -142,20 +145,31 @@ fn monitor_loop() {
         }
     }
 
-    loop {
+    // "Token bucket"
+    let mut token_bucket = 1000;
+    for count in 0u64.. {
+        if count % 100 == 0 && token_bucket < 1000 {
+            token_bucket += 1
+        }
         EXEC.rebalance();
         if SINGLE_THREAD.load(Ordering::Relaxed) {
             return;
         }
-        let before_sleep = POLL_COUNT.load(Ordering::Relaxed);
+        let before_sleep = POLL_COUNT.count();
         std::thread::sleep(Duration::from_millis(MONITOR_MS));
-        let after_sleep = POLL_COUNT.load(Ordering::Relaxed);
+        let after_sleep = POLL_COUNT.count();
         let running_threads = THREAD_COUNT.load(Ordering::Relaxed);
-        let full_running = FUTURES_BEING_POLLED.load(Ordering::Relaxed) >= running_threads;
-        if after_sleep == before_sleep && running_threads <= MAX_THREADS && full_running {
+        let full_running = FUTURES_BEING_POLLED.count() >= running_threads;
+        if after_sleep == before_sleep
+            && running_threads <= MAX_THREADS
+            && full_running
+            && token_bucket > 0
+        {
             start_thread(true, false);
+            token_bucket -= 1;
         }
     }
+    unreachable!()
 }
 
 /// Spawns a future onto the global executor and immediately blocks on it.
@@ -189,45 +203,43 @@ struct WrappedFuture<T, F: Future<Output = T>> {
     fut: F,
 }
 
-static ACTIVE_TASKS: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_TASKS: Lazy<FastCounter> = Lazy::new(Default::default);
 
 /// Returns the current number of active tasks.
 pub fn active_task_count() -> usize {
-    ACTIVE_TASKS.load(Ordering::Relaxed)
+    ACTIVE_TASKS.count()
 }
 
 /// Returns the current number of running tasks.
 pub fn running_task_count() -> usize {
-    FUTURES_BEING_POLLED.load(Ordering::Relaxed)
+    FUTURES_BEING_POLLED.count()
 }
 
 impl<T, F: Future<Output = T>> Drop for WrappedFuture<T, F> {
     fn drop(&mut self) {
-        ACTIVE_TASKS.fetch_sub(1, Ordering::Relaxed);
+        ACTIVE_TASKS.decr();
     }
 }
 
 impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
     type Output = T;
 
+    #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        FUTURES_BEING_POLLED.fetch_add(1, Ordering::Relaxed);
-        POLL_COUNT.fetch_add(1, Ordering::Relaxed);
+        FUTURES_BEING_POLLED.incr();
+        POLL_COUNT.incr();
         scopeguard::defer!({
-            FUTURES_BEING_POLLED.fetch_sub(1, Ordering::Relaxed);
+            FUTURES_BEING_POLLED.decr();
         });
 
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };
-        let start = Instant::now();
-        let res = fut.poll(cx);
-        log::trace!("poll took {:?}", start.elapsed());
-        res
+        fut.poll(cx)
     }
 }
 
 impl<T, F: Future<Output = T> + 'static> WrappedFuture<T, F> {
     pub fn new(fut: F) -> Self {
-        ACTIVE_TASKS.fetch_add(1, Ordering::Relaxed);
+        ACTIVE_TASKS.incr();
         WrappedFuture { fut }
     }
 }

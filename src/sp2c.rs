@@ -20,6 +20,7 @@ pub struct Sp2cSender<T> {
 
 impl<T> Sp2cSender<T> {
     /// Sends to the other side. If the queue is full, the item is returned back.
+    #[inline]
     pub fn send(&mut self, item: T) -> Result<(), T> {
         self.send.push(item).map_err(|v| match v {
             PushError::Full(v) => v,
@@ -27,6 +28,7 @@ impl<T> Sp2cSender<T> {
     }
 
     /// Length
+    #[inline]
     pub fn slots(&mut self) -> usize {
         self.send.slots()
     }
@@ -39,6 +41,7 @@ pub struct Sp2cReceiver<T> {
 
 impl<T> Sp2cReceiver<T> {
     /// Pops an item from the queue. If the queue is empty, returns None.
+    #[inline]
     pub fn pop(&mut self) -> Option<T> {
         self.recv.lock().pop().ok()
     }
@@ -59,10 +62,5 @@ impl<T> Sp2cStealer<T> {
             buf.push(recv.pop().unwrap())
         }
         Some(to_pop)
-    }
-
-    /// Remaining items stealable
-    pub fn stealable(&self) -> usize {
-        self.recv.lock().slots()
     }
 }
