@@ -74,7 +74,7 @@ impl Executor {
                 global_evt.notify_additional(1);
             }
         });
-        runnable.run();
+        runnable.schedule();
         task
     }
 
