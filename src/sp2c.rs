@@ -4,7 +4,7 @@ use rtrb::PushError;
 
 /// Create a new sp2c
 pub fn sp2c<T>() -> (Sp2cSender<T>, Sp2cReceiver<T>, Sp2cStealer<T>) {
-    let ring = rtrb::RingBuffer::new(256);
+    let ring = rtrb::RingBuffer::new(512);
     let (send, recv) = ring.split();
     let recv = Arc::new(spin::Mutex::new(recv));
     let sender = Sp2cSender { send };

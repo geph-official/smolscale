@@ -1,6 +1,9 @@
 use std::{
     cell::{RefCell, UnsafeCell},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 use async_task::Runnable;
@@ -9,6 +12,7 @@ use event_listener::Event;
 use futures_intrusive::sync::ManualResetEvent;
 use futures_lite::{Future, FutureExt};
 use slab::Slab;
+use spin::Mutex;
 
 use crate::sp2c::{sp2c, Sp2cReceiver, Sp2cSender, Sp2cStealer};
 
@@ -46,9 +50,6 @@ impl Executor {
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             // attempt to spawn onto the worker that last ran
             let local_success: Result<(), Runnable> = TLS.with(|tls| {
-                if fastrand::u8(0..100) == 0 {
-                    return Err(runnable);
-                }
                 if let Some(tls) = tls.borrow().as_ref() {
                     if !Arc::ptr_eq(&tls.global_queue, &global_queue) {
                         // shoot, does not belong to this executor
@@ -82,7 +83,7 @@ impl Executor {
         let (send, recv, stealer) = sp2c();
         let sender: UnsafeLocalSender = Arc::new(UnsafeCell::new(send));
         let notifier = Arc::new(ManualResetEvent::new(false));
-        let worker_id = self.stealers.lock().unwrap().insert(stealer);
+        let worker_id = self.stealers.lock().insert(stealer);
         Worker {
             worker_id,
             sender,
@@ -96,7 +97,7 @@ impl Executor {
 
     /// Rebalance the executor. Can/should be called from a monitor thread.
     pub fn rebalance(&self) {
-        let mut stealers = self.stealers.lock().unwrap();
+        let mut stealers = self.stealers.lock();
         if stealers.is_empty() {
             return;
         }
@@ -120,12 +121,12 @@ impl Executor {
             self.global_queue.push(stolen).unwrap();
         }
         self.global_notifier.notify_additional(1);
-        if fastrand::f32() < 0.01 {
-            log::debug!("{} in global queue", self.global_queue.len());
-            for (idx, stealer) in stealers.iter() {
-                log::debug!("{} in local queue {}", stealer.stealable(), idx)
-            }
-        }
+        // if fastrand::f32() < 0.01 {
+        //     log::debug!("{} in global queue", self.global_queue.len());
+        //     for (idx, stealer) in stealers.iter() {
+        //         log::debug!("{} in local queue {}", stealer.stealable(), idx)
+        //     }
+        // }
     }
 }
 
@@ -139,11 +140,16 @@ struct TlsState {
     inner_sender: UnsafeLocalSender,
     local_notifier: Arc<ManualResetEvent>,
     global_queue: Arc<ConcurrentQueue<Runnable>>, // for identification purposes
+    counter: UnsafeCell<usize>,
 }
 
 impl TlsState {
     unsafe fn schedule_local(&self, task: Runnable) -> Result<(), Runnable> {
         let inner = &mut *self.inner_sender.get();
+        *self.counter.get() += 1;
+        if *self.counter.get() % 64 == 0 {
+            return Err(task);
+        }
         inner.send(task)?;
         self.local_notifier.set();
         Ok(())
@@ -163,7 +169,7 @@ pub struct Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.stealers.lock().unwrap().remove(self.worker_id);
+        self.stealers.lock().remove(self.worker_id);
         TLS.with(|v| v.borrow_mut().take());
     }
 }
@@ -210,30 +216,9 @@ impl Worker {
                     inner_sender: self.sender.clone(),
                     local_notifier: self.local_notifier.clone(),
                     global_queue: self.global_queue.clone(),
+                    counter: Default::default(),
                 });
             }
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::*;
-    #[test]
-    fn simple() {
-        let exec = Executor::new();
-        let _tasks = (0..10)
-            .map(|i| {
-                exec.spawn(async move {
-                    loop {
-                        eprintln!("hello world {}", i);
-                        async_io::Timer::after(Duration::from_secs(1)).await;
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-        async_io::block_on(exec.worker().run());
     }
 }

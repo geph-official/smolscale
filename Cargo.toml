@@ -30,6 +30,16 @@ spin={version="0.9", default-features=false, features=["mutex", "spin_mutex"]}
 backtrace="0.3"
 fastrand="1"
 futures-intrusive = "0.4"
+crossbeam-queue="0.3"
+# parking_lot = "0.11.1"
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+overflow-checks = true
+debug=2
+# lto=true
+# codegen-units=1
 
 [dev-dependencies]
 criterion = "0.3"
