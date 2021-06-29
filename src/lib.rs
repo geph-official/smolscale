@@ -226,11 +226,11 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        FUTURES_BEING_POLLED.incr();
+        // FUTURES_BEING_POLLED.incr();
         POLL_COUNT.incr();
-        scopeguard::defer!({
-            FUTURES_BEING_POLLED.decr();
-        });
+        // scopeguard::defer!({
+        //     FUTURES_BEING_POLLED.decr();
+        // });
 
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };
         fut.poll(cx)

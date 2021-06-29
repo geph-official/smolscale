@@ -21,7 +21,9 @@ impl FastCounter {
     /// Decrement the counter
     #[inline]
     pub fn decr(&self) {
-        self.counters.get().unwrap().fetch_sub(1, Ordering::Relaxed);
+        self.counters
+            .get_or_default()
+            .fetch_sub(1, Ordering::Relaxed);
     }
 
     /// Get the total count
@@ -29,6 +31,6 @@ impl FastCounter {
         self.counters
             .iter()
             .map(|f| f.load(Ordering::Relaxed))
-            .sum()
+            .fold(0usize, |x, y| x.wrapping_add(y))
     }
 }
