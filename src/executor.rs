@@ -182,6 +182,9 @@ impl Worker {
             self.set_tls();
             while let Some(task) = self.run_once() {
                 task.run();
+                if fastrand::u8(0..u8::MAX) == 0 {
+                    futures_lite::future::yield_now().await;
+                }
             }
             let local = self.local_notifier.wait();
             local.or(global).await;
