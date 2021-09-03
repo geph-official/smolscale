@@ -1,6 +1,6 @@
 [package]
 name = "smolscale"
-version = "0.3.16-alpha.0"
+version = "0.3.16"
 authors = ["nullchinchilla <nullchinchilla@pm.me>"]
 edition = "2018"
 description="A global, auto-scaling, preemptive scheduler"
@@ -33,6 +33,7 @@ futures-intrusive = "0.4"
 # crossbeam-queue="0.3"
 thread_local="1"
 cache-padded="1"
+crossbeam-deque = "0.8.1"
 # stacker="0.1"
 # parking_lot = "0.11.1"
 

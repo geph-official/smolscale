@@ -1,22 +1,21 @@
 use std::{
     cell::{RefCell, UnsafeCell},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use async_task::Runnable;
 use concurrent_queue::ConcurrentQueue;
-use event_listener::Event;
+use crossbeam_deque::{Injector, Steal, Stealer};
+use event_listener::{Event, EventListener};
 use futures_intrusive::sync::ManualResetEvent;
 use futures_lite::{Future, FutureExt};
 use slab::Slab;
 
-use crate::sp2c::{sp2c, Sp2cReceiver, Sp2cSender, Sp2cStealer};
-
 /// A self-contained executor context.
 pub struct Executor {
-    global_queue: Arc<ConcurrentQueue<Runnable>>,
+    global_queue: Arc<Injector<Runnable>>,
     global_notifier: Arc<Event>,
-    stealers: Arc<Mutex<Slab<Sp2cStealer<Runnable>>>>,
+    stealers: Arc<RwLock<Slab<Stealer<Runnable>>>>,
 }
 
 impl Default for Executor {
@@ -29,7 +28,7 @@ impl Executor {
     /// Creates a new executor.
     pub fn new() -> Self {
         Self {
-            global_queue: Arc::new(ConcurrentQueue::unbounded()),
+            global_queue: Arc::new(Injector::new()),
             global_notifier: Arc::new(Event::new()),
             stealers: Default::default(),
         }
@@ -46,7 +45,7 @@ impl Executor {
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             // attempt to spawn onto the worker that last ran
             let local_success: Result<(), Runnable> = TLS.with(|tls| {
-                if let Some(tls) = tls.borrow().as_ref() {
+                if let Some(tls) = tls.borrow_mut().as_mut() {
                     if !Arc::ptr_eq(&tls.global_queue, &global_queue) {
                         // shoot, does not belong to this executor
                         log::trace!("oh no doesn't belong");
@@ -54,7 +53,6 @@ impl Executor {
                     } else {
                         // this is great
                         unsafe { tls.schedule_local(runnable) }?;
-                        log::trace!("scheduled locally");
                         Ok(())
                     }
                 } else {
@@ -64,11 +62,11 @@ impl Executor {
             });
             if let Err(runnable) = local_success {
                 // fall back to global queue
-                log::trace!("scheduled globally");
+                // eprintln!("scheduled globally");
                 // let bt = Backtrace::new();
                 // println!("{:?}", bt);
-                global_queue.push(runnable).unwrap();
-                global_evt.notify(usize::MAX);
+                global_queue.push(runnable);
+                global_evt.notify_additional(1);
             }
         });
         runnable.schedule();
@@ -77,16 +75,16 @@ impl Executor {
 
     /// Obtains a new worker.
     pub fn worker(&self) -> Worker {
-        let (send, recv, stealer) = sp2c();
-        let sender: UnsafeLocalSender = Arc::new(UnsafeCell::new(send));
+        let local_queue = crossbeam_deque::Worker::new_fifo();
+        let stealer = local_queue.stealer();
         let notifier = Arc::new(ManualResetEvent::new(false));
-        let worker_id = self.stealers.lock().unwrap().insert(stealer);
+        let worker_id = self.stealers.write().unwrap().insert(stealer);
         Worker {
             worker_id,
-            sender,
+            local_queue,
             local_notifier: notifier,
             global_notifier: self.global_notifier.clone(),
-            receiver: recv,
+            global_notifier_handle: self.global_notifier.listen(),
             global_queue: self.global_queue.clone(),
             stealers: self.stealers.clone(),
         }
@@ -94,36 +92,10 @@ impl Executor {
 
     /// Rebalance the executor. Can/should be called from a monitor thread.
     pub fn rebalance(&self) {
-        let mut stealers = self.stealers.lock().unwrap();
-        if stealers.is_empty() {
-            return;
-        }
-        let mut stolen = Vec::with_capacity(16);
-        let random_start = fastrand::usize(0..stealers.len());
-        for (_, stealer) in stealers.iter_mut().skip(random_start) {
-            stealer.steal_batch(&mut stolen);
-            if !stolen.is_empty() {
-                break;
-            }
-        }
-        if stolen.is_empty() {
-            for (_, stealer) in stealers.iter_mut().take(random_start) {
-                stealer.steal_batch(&mut stolen);
-                if !stolen.is_empty() {
-                    break;
-                }
-            }
-        }
-        for stolen in stolen {
-            self.global_queue.push(stolen).unwrap();
-        }
-        self.global_notifier.notify(usize::MAX);
-        // if fastrand::f32() < 0.01 {
-        //     log::debug!("{} in global queue", self.global_queue.len());
-        //     for (idx, stealer) in stealers.iter() {
-        //         log::debug!("{} in local queue {}", stealer.stealable(), idx)
-        //     }
-        // }
+        // all we need to do is to notify something.
+        // if everybody's busy, we don't have to do anything anyway because they'll work-steal once they're done
+        // otherwise, there may be an idle thread that doesn't know that it can steal from others, so we notify it
+        self.global_notifier.notify_additional(1);
     }
 }
 
@@ -131,25 +103,22 @@ thread_local! {
     static TLS: RefCell<Option<TlsState>> = Default::default();
 }
 
-type UnsafeLocalSender = Arc<UnsafeCell<Sp2cSender<Runnable>>>;
-
 struct TlsState {
-    inner_sender: UnsafeLocalSender,
+    inner_sender: Vec<Runnable>,
     local_notifier: Arc<ManualResetEvent>,
-    global_queue: Arc<ConcurrentQueue<Runnable>>, // for identification purposes
+    global_queue: Arc<Injector<Runnable>>, // for identification purposes
     counter: UnsafeCell<usize>,
 }
 
 impl TlsState {
     #[inline]
-    unsafe fn schedule_local(&self, task: Runnable) -> Result<(), Runnable> {
-        let inner = &mut *self.inner_sender.get();
+    unsafe fn schedule_local(&mut self, task: Runnable) -> Result<(), Runnable> {
         *self.counter.get() += 1;
         // occasionally, we intentionally fail to push tasks to the global queue. this improves fairness.
         if *self.counter.get() % 256 == 0 {
             return Err(task);
         }
-        inner.send(task)?;
+        self.inner_sender.push(task);
         self.local_notifier.set();
         Ok(())
     }
@@ -158,17 +127,17 @@ impl TlsState {
 pub struct Worker {
     worker_id: usize,
 
-    sender: UnsafeLocalSender,
+    local_queue: crossbeam_deque::Worker<Runnable>,
     local_notifier: Arc<ManualResetEvent>,
     global_notifier: Arc<Event>,
-    receiver: Sp2cReceiver<Runnable>,
-    global_queue: Arc<ConcurrentQueue<Runnable>>,
-    stealers: Arc<Mutex<Slab<Sp2cStealer<Runnable>>>>,
+    global_notifier_handle: EventListener,
+    global_queue: Arc<Injector<Runnable>>,
+    stealers: Arc<RwLock<Slab<Stealer<Runnable>>>>,
 }
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.stealers.lock().unwrap().remove(self.worker_id);
+        self.stealers.write().unwrap().remove(self.worker_id);
         TLS.with(|v| v.borrow_mut().take());
     }
 }
@@ -179,58 +148,55 @@ impl Worker {
     pub async fn run(&mut self) {
         self.set_tls();
         loop {
-            let global = self.global_notifier.listen();
-            let global = async move {
-                global.await;
-                true
-            };
+            let global = std::mem::replace(
+                &mut self.global_notifier_handle,
+                self.global_notifier.listen(),
+            );
             self.set_tls();
             while let Some(task) = self.run_once() {
-                if task.run() {
-                    self.steal_global();
-                }
+                task.run();
                 if fastrand::u8(0..=u8::MAX) == 0 {
                     futures_lite::future::yield_now().await;
                 }
             }
             let local = self.local_notifier.wait();
-            let local = async move {
-                local.await;
-                false
-            };
-            if local.or(global).await {
-                self.steal_global();
-            } else {
-                self.local_notifier.reset();
-            }
+            local.or(global).await;
+            self.local_notifier.reset();
         }
     }
 
     #[inline]
     fn run_once(&mut self) -> Option<Runnable> {
-        self.receiver.pop()
-        // if let Some(task) = self.receiver.pop() {
-        //     return Some(task);
-        // }
-        // // SAFETY: cannot alias with TLS method
-        // self.steal_global();
-        // self.receiver.pop()
+        TLS.with(|tls| {
+            if let Some(tls) = tls.borrow_mut().as_mut() {
+                for task in tls.inner_sender.drain(0..) {
+                    self.local_queue.push(task);
+                }
+            }
+        });
+        // self.local_queue.pop()
+        if let Some(task) = self.local_queue.pop() {
+            return Some(task);
+        }
+        self.steal_global();
+        if let Some(task) = self.local_queue.pop() {
+            return Some(task);
+        }
+        // we do work stealing here
+        let stealers = self.stealers.read().unwrap();
+        let mut stealers: Vec<&Stealer<_>> = stealers.iter().map(|(_, s)| s).collect();
+        fastrand::shuffle(&mut stealers);
+        for stealer in stealers {
+            if let Steal::Success(some) = stealer.steal_batch_and_pop(&self.local_queue) {
+                return Some(some);
+            }
+        }
+        None
     }
 
     #[inline]
     fn steal_global(&mut self) {
-        let sender = unsafe { &mut *self.sender.get() };
-        let steal_limit = sender.slots().min(self.global_queue.len() / 2 + 1);
-        if steal_limit > 0 {
-            let mut steal_count = 0;
-            while let Some(stolen) = self.global_queue.pop().ok() {
-                steal_count += 1;
-                sender.send(stolen).unwrap();
-                if steal_count >= steal_limit {
-                    break;
-                }
-            }
-        }
+        while let Steal::Retry = self.global_queue.steal_batch(&self.local_queue) {}
     }
 
     #[inline]
@@ -239,7 +205,7 @@ impl Worker {
             let mut f = f.borrow_mut();
             if f.is_none() {
                 *f = Some(TlsState {
-                    inner_sender: self.sender.clone(),
+                    inner_sender: Vec::new(),
                     local_notifier: self.local_notifier.clone(),
                     global_queue: self.global_queue.clone(),
                     counter: Default::default(),

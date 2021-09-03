@@ -55,12 +55,11 @@ use std::{
     sync::atomic::AtomicUsize,
     sync::atomic::{AtomicBool, Ordering},
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 mod executor;
 mod fastcounter;
 mod nursery;
-mod sp2c;
 pub use executor::*;
 pub use nursery::*;
 
@@ -231,9 +230,12 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
         // scopeguard::defer!({
         //     FUTURES_BEING_POLLED.decr();
         // });
+        let start = Instant::now();
 
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };
-        fut.poll(cx)
+        let res = fut.poll(cx);
+        log::trace!("poll took {:?}", start.elapsed());
+        res
     }
 }
 
