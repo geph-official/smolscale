@@ -192,6 +192,7 @@ impl Worker {
                 }
                 if fastrand::u8(0..=u8::MAX) == 0 {
                     futures_lite::future::yield_now().await;
+                    self.steal_global();
                 }
             }
             let local = self.local_notifier.wait();
