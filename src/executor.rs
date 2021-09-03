@@ -1,6 +1,6 @@
 use std::{
     cell::{RefCell, UnsafeCell},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use async_task::Runnable;
@@ -9,7 +9,6 @@ use event_listener::Event;
 use futures_intrusive::sync::ManualResetEvent;
 use futures_lite::{Future, FutureExt};
 use slab::Slab;
-use spin::Mutex;
 
 use crate::sp2c::{sp2c, Sp2cReceiver, Sp2cSender, Sp2cStealer};
 
@@ -69,7 +68,7 @@ impl Executor {
                 // let bt = Backtrace::new();
                 // println!("{:?}", bt);
                 global_queue.push(runnable).unwrap();
-                global_evt.notify_additional(1);
+                global_evt.notify(usize::MAX);
             }
         });
         runnable.schedule();
@@ -81,7 +80,7 @@ impl Executor {
         let (send, recv, stealer) = sp2c();
         let sender: UnsafeLocalSender = Arc::new(UnsafeCell::new(send));
         let notifier = Arc::new(ManualResetEvent::new(false));
-        let worker_id = self.stealers.lock().insert(stealer);
+        let worker_id = self.stealers.lock().unwrap().insert(stealer);
         Worker {
             worker_id,
             sender,
@@ -95,7 +94,7 @@ impl Executor {
 
     /// Rebalance the executor. Can/should be called from a monitor thread.
     pub fn rebalance(&self) {
-        let mut stealers = self.stealers.lock();
+        let mut stealers = self.stealers.lock().unwrap();
         if stealers.is_empty() {
             return;
         }
@@ -118,7 +117,7 @@ impl Executor {
         for stolen in stolen {
             self.global_queue.push(stolen).unwrap();
         }
-        self.global_notifier.notify_additional(1);
+        self.global_notifier.notify(usize::MAX);
         // if fastrand::f32() < 0.01 {
         //     log::debug!("{} in global queue", self.global_queue.len());
         //     for (idx, stealer) in stealers.iter() {
@@ -169,7 +168,7 @@ pub struct Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.stealers.lock().remove(self.worker_id);
+        self.stealers.lock().unwrap().remove(self.worker_id);
         TLS.with(|v| v.borrow_mut().take());
     }
 }
@@ -192,7 +191,6 @@ impl Worker {
                 }
                 if fastrand::u8(0..=u8::MAX) == 0 {
                     futures_lite::future::yield_now().await;
-                    self.steal_global();
                 }
             }
             let local = self.local_notifier.wait();

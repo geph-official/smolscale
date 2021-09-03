@@ -6,7 +6,7 @@ use rtrb::PushError;
 pub fn sp2c<T>() -> (Sp2cSender<T>, Sp2cReceiver<T>, Sp2cStealer<T>) {
     let ring = rtrb::RingBuffer::new(512);
     let (send, recv) = ring.split();
-    let recv = Arc::new(spin::Mutex::new(recv));
+    let recv = Arc::new(std::sync::Mutex::new(recv));
     let sender = Sp2cSender { send };
     let receiver = Sp2cReceiver { recv: recv.clone() };
     let stealer = Sp2cStealer { recv };
@@ -36,26 +36,26 @@ impl<T> Sp2cSender<T> {
 
 /// "Main" receiving end for the sp2c
 pub struct Sp2cReceiver<T> {
-    recv: Arc<spin::Mutex<rtrb::Consumer<T>>>,
+    recv: Arc<std::sync::Mutex<rtrb::Consumer<T>>>,
 }
 
 impl<T> Sp2cReceiver<T> {
     /// Pops an item from the queue. If the queue is empty, returns None.
     #[inline]
     pub fn pop(&mut self) -> Option<T> {
-        self.recv.lock().pop().ok()
+        self.recv.lock().unwrap().pop().ok()
     }
 }
 
 /// "Side" receiving end for the sp2c
 pub struct Sp2cStealer<T> {
-    recv: Arc<spin::Mutex<rtrb::Consumer<T>>>,
+    recv: Arc<std::sync::Mutex<rtrb::Consumer<T>>>,
 }
 
 impl<T> Sp2cStealer<T> {
     /// Steals a bunch of items from the queue (at most roughly half the queue), and puts them into the given buffer.
     pub fn steal_batch(&mut self, buf: &mut Vec<T>) -> Option<usize> {
-        let mut recv = self.recv.try_lock()?; // give up if we can't acquire the lock
+        let mut recv = self.recv.try_lock().ok()?; // give up if we can't acquire the lock
         let to_pop = recv.slots() / 2;
         // TODO some kind of voodoo to not incur constant sync overhead
         for _ in 0..to_pop {
