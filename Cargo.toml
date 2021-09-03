@@ -30,7 +30,7 @@ spin={version="0.9", default-features=false, features=["mutex", "spin_mutex"]}
 backtrace="0.3"
 fastrand="1"
 futures-intrusive = "0.4"
-crossbeam-queue="0.3"
+# crossbeam-queue="0.3"
 thread_local="1"
 cache-padded="1"
 # stacker="0.1"
