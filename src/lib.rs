@@ -137,11 +137,11 @@ fn monitor_loop() {
             .unwrap();
     }
     if SINGLE_THREAD.load(Ordering::Relaxed) {
-        start_thread(false, true);
+        start_thread(false, false);
         return;
     } else {
         for _ in 0..num_cpus::get() {
-            start_thread(false, true);
+            start_thread(false, false);
         }
     }
 

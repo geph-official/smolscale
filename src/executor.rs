@@ -59,6 +59,7 @@ impl Executor {
                         Ok(())
                     }
                 } else {
+                    log::trace!("no TLS");
                     Err(runnable)
                 }
             });
@@ -175,41 +176,65 @@ impl Drop for Worker {
 
 impl Worker {
     /// Runs this worker.
+    #[inline]
     pub async fn run(&mut self) {
         self.set_tls();
         loop {
             let global = self.global_notifier.listen();
+            let global = async move {
+                global.await;
+                true
+            };
             self.set_tls();
             while let Some(task) = self.run_once() {
-                task.run();
-                if fastrand::u8(0..u8::MAX) == 0 {
+                if task.run() {
+                    self.steal_global();
+                }
+                if fastrand::u8(0..=u8::MAX) == 0 {
                     futures_lite::future::yield_now().await;
                 }
             }
             let local = self.local_notifier.wait();
-            local.or(global).await;
-            self.local_notifier.reset();
-        }
-    }
-
-    fn run_once(&mut self) -> Option<Runnable> {
-        if let Some(task) = self.receiver.pop() {
-            return Some(task);
-        }
-        // SAFETY: cannot alias with TLS method
-        let sender = unsafe { &mut *self.sender.get() };
-        let steal_limit = sender.slots().min(self.global_queue.len() / 2);
-        let mut steal_count = 0;
-        while let Some(stolen) = self.global_queue.pop().ok() {
-            steal_count += 1;
-            sender.send(stolen).unwrap();
-            if steal_count >= steal_limit {
-                break;
+            let local = async move {
+                local.await;
+                false
+            };
+            if local.or(global).await {
+                self.steal_global();
+            } else {
+                self.local_notifier.reset();
             }
         }
-        self.receiver.pop()
     }
 
+    #[inline]
+    fn run_once(&mut self) -> Option<Runnable> {
+        self.receiver.pop()
+        // if let Some(task) = self.receiver.pop() {
+        //     return Some(task);
+        // }
+        // // SAFETY: cannot alias with TLS method
+        // self.steal_global();
+        // self.receiver.pop()
+    }
+
+    #[inline]
+    fn steal_global(&mut self) {
+        let sender = unsafe { &mut *self.sender.get() };
+        let steal_limit = sender.slots().min(self.global_queue.len() / 2 + 1);
+        if steal_limit > 0 {
+            let mut steal_count = 0;
+            while let Some(stolen) = self.global_queue.pop().ok() {
+                steal_count += 1;
+                sender.send(stolen).unwrap();
+                if steal_count >= steal_limit {
+                    break;
+                }
+            }
+        }
+    }
+
+    #[inline]
     fn set_tls(&mut self) {
         TLS.with(|f| {
             let mut f = f.borrow_mut();
