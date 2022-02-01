@@ -73,7 +73,6 @@ const MAX_THREADS: usize = 1500;
 // }
 static EXEC: Lazy<Executor> = Lazy::new(Executor::new);
 
-static FUTURES_BEING_POLLED: Lazy<FastCounter> = Lazy::new(Default::default);
 static POLL_COUNT: Lazy<FastCounter> = Lazy::new(Default::default);
 
 static THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -145,9 +144,9 @@ fn monitor_loop() {
     }
 
     // "Token bucket"
-    let mut token_bucket = 1000;
+    let mut token_bucket = 100;
     for count in 0u64.. {
-        if count % 100 == 0 && token_bucket < 1000 {
+        if count % 100 == 0 && token_bucket < 100 {
             token_bucket += 1
         }
         EXEC.rebalance();
@@ -158,12 +157,7 @@ fn monitor_loop() {
         std::thread::sleep(Duration::from_millis(MONITOR_MS));
         let after_sleep = POLL_COUNT.count();
         let running_threads = THREAD_COUNT.load(Ordering::Relaxed);
-        let full_running = FUTURES_BEING_POLLED.count() >= running_threads;
-        if after_sleep == before_sleep
-            && running_threads <= MAX_THREADS
-            && full_running
-            && token_bucket > 0
-        {
+        if after_sleep == before_sleep && running_threads <= MAX_THREADS && token_bucket > 0 {
             start_thread(true, false);
             token_bucket -= 1;
         }
@@ -209,10 +203,10 @@ pub fn active_task_count() -> usize {
     ACTIVE_TASKS.count()
 }
 
-/// Returns the current number of running tasks.
-pub fn running_task_count() -> usize {
-    FUTURES_BEING_POLLED.count()
-}
+// /// Returns the current number of running tasks.
+// pub fn running_task_count() -> usize {
+//     FUTURES_BEING_POLLED.count()
+// }
 
 impl<T, F: Future<Output = T>> Drop for WrappedFuture<T, F> {
     fn drop(&mut self) {
@@ -225,11 +219,7 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // FUTURES_BEING_POLLED.incr();
         POLL_COUNT.incr();
-        // scopeguard::defer!({
-        //     FUTURES_BEING_POLLED.decr();
-        // });
         let start = Instant::now();
 
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };

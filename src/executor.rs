@@ -1,10 +1,9 @@
 use std::{
     cell::{RefCell, UnsafeCell},
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
 };
 
 use async_task::Runnable;
-use concurrent_queue::ConcurrentQueue;
 use crossbeam_deque::{Injector, Steal, Stealer};
 use event_listener::{Event, EventListener};
 use futures_intrusive::sync::ManualResetEvent;
@@ -48,10 +47,11 @@ impl Executor {
                 if let Some(tls) = tls.borrow_mut().as_mut() {
                     if !Arc::ptr_eq(&tls.global_queue, &global_queue) {
                         // shoot, does not belong to this executor
-                        log::trace!("oh no doesn't belong");
+                        // log::trace!("oh no doesn't belong");
                         Err(runnable)
                     } else {
                         // this is great
+                        // eprintln!("scheduled locally");
                         unsafe { tls.schedule_local(runnable) }?;
                         Ok(())
                     }
@@ -66,10 +66,11 @@ impl Executor {
                 // let bt = Backtrace::new();
                 // println!("{:?}", bt);
                 global_queue.push(runnable);
-                global_evt.notify_additional(1);
+                global_evt.notify(1);
             }
         });
         runnable.schedule();
+        self.rebalance();
         task
     }
 
@@ -93,9 +94,7 @@ impl Executor {
     /// Rebalance the executor. Can/should be called from a monitor thread.
     pub fn rebalance(&self) {
         // all we need to do is to notify something.
-        // if everybody's busy, we don't have to do anything anyway because they'll work-steal once they're done
-        // otherwise, there may be an idle thread that doesn't know that it can steal from others, so we notify it
-        self.global_notifier.notify_additional(1);
+        self.global_notifier.notify(usize::MAX);
     }
 }
 
@@ -114,10 +113,10 @@ impl TlsState {
     #[inline]
     unsafe fn schedule_local(&mut self, task: Runnable) -> Result<(), Runnable> {
         *self.counter.get() += 1;
-        // occasionally, we intentionally fail to push tasks to the global queue. this improves fairness.
-        if *self.counter.get() % 256 == 0 {
-            return Err(task);
-        }
+        // // occasionally, we intentionally fail to push tasks to the global queue. this improves fairness.
+        // if *self.counter.get() % 256 == 0 {
+        //     return Err(task);
+        // }
         self.inner_sender.push(task);
         self.local_notifier.set();
         Ok(())
@@ -147,26 +146,35 @@ impl Worker {
     #[inline]
     pub async fn run(&mut self) {
         self.set_tls();
+        let mut is_global = false;
         loop {
             let global = std::mem::replace(
                 &mut self.global_notifier_handle,
                 self.global_notifier.listen(),
             );
             self.set_tls();
-            while let Some(task) = self.run_once() {
+            while let Some(task) = self.run_once(is_global) {
                 task.run();
                 if fastrand::u8(0..=u8::MAX) == 0 {
                     futures_lite::future::yield_now().await;
                 }
             }
             let local = self.local_notifier.wait();
-            local.or(global).await;
+            is_global = async {
+                local.await;
+                false
+            }
+            .race(async {
+                global.await;
+                true
+            })
+            .await;
             self.local_notifier.reset();
         }
     }
 
     #[inline]
-    fn run_once(&mut self) -> Option<Runnable> {
+    fn run_once(&mut self, is_global: bool) -> Option<Runnable> {
         TLS.with(|tls| {
             if let Some(tls) = tls.borrow_mut().as_mut() {
                 for task in tls.inner_sender.drain(0..) {
@@ -174,11 +182,13 @@ impl Worker {
                 }
             }
         });
-        // self.local_queue.pop()
-        if let Some(task) = self.local_queue.pop() {
-            return Some(task);
+        // // // self.local_queue.pop()
+        // if let Some(task) = self.local_queue.pop() {
+        //     return Some(task);
+        // }
+        if is_global {
+            self.steal_global();
         }
-        self.steal_global();
         if let Some(task) = self.local_queue.pop() {
             return Some(task);
         }
