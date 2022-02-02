@@ -66,11 +66,10 @@ impl Executor {
                 // let bt = Backtrace::new();
                 // println!("{:?}", bt);
                 global_queue.push(runnable);
-                global_evt.notify_additional(1);
+                global_evt.notify(1);
             }
         });
         runnable.schedule();
-        self.rebalance();
         task
     }
 
@@ -145,7 +144,7 @@ impl Drop for Worker {
         while let Some(task) = self.local_queue.pop() {
             self.global_queue.push(task);
         }
-        self.global_notifier.notify_additional(1);
+        self.global_notifier.notify(usize::MAX);
     }
 }
 
@@ -163,10 +162,8 @@ impl Worker {
             self.set_tls();
             while let Some(task) = self.run_once(is_global) {
                 task.run();
-                if fastrand::u8(0..=u8::MAX) == 0 {
-                    futures_lite::future::yield_now().await;
-                }
             }
+            futures_lite::future::yield_now().await;
             let local = self.local_notifier.wait();
             is_global = async {
                 local.await;
