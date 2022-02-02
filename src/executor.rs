@@ -66,7 +66,7 @@ impl Executor {
                 // let bt = Backtrace::new();
                 // println!("{:?}", bt);
                 global_queue.push(runnable);
-                global_evt.notify(1);
+                global_evt.notify_additional(1);
             }
         });
         runnable.schedule();
@@ -109,14 +109,18 @@ struct TlsState {
     counter: UnsafeCell<usize>,
 }
 
+impl Drop for TlsState {
+    fn drop(&mut self) {
+        for runnable in self.inner_sender.drain(..) {
+            self.global_queue.push(runnable);
+        }
+    }
+}
+
 impl TlsState {
     #[inline]
     unsafe fn schedule_local(&mut self, task: Runnable) -> Result<(), Runnable> {
         *self.counter.get() += 1;
-        // // occasionally, we intentionally fail to push tasks to the global queue. this improves fairness.
-        // if *self.counter.get() % 256 == 0 {
-        //     return Err(task);
-        // }
         self.inner_sender.push(task);
         self.local_notifier.set();
         Ok(())
@@ -136,8 +140,12 @@ pub struct Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.stealers.write().unwrap().remove(self.worker_id);
         TLS.with(|v| v.borrow_mut().take());
+        self.stealers.write().unwrap().remove(self.worker_id);
+        while let Some(task) = self.local_queue.pop() {
+            self.global_queue.push(task);
+        }
+        self.global_notifier.notify_additional(1);
     }
 }
 
