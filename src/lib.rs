@@ -86,6 +86,11 @@ pub fn permanently_single_threaded() {
     SINGLE_THREAD.store(true, Ordering::Relaxed);
 }
 
+/// Returns the number of running threads.
+pub fn running_threads() -> usize {
+    THREAD_COUNT.load(Ordering::Relaxed)
+}
+
 fn start_monitor() {
     MONITOR.get_or_init(|| {
         std::thread::Builder::new()
@@ -107,7 +112,6 @@ fn monitor_loop() {
                 }
                 .into(),
             )
-            .stack_size(10 * 1024 * 1024)
             .spawn(move || {
                 // let local_exec = LEXEC.with(|v| Rc::clone(v));
                 let future = async {
@@ -132,7 +136,7 @@ fn monitor_loop() {
                     futures_lite::future::block_on(future)
                 }
             })
-            .unwrap();
+            .expect("cannot spawn thread");
     }
     if SINGLE_THREAD.load(Ordering::Relaxed) {
         start_thread(false, true);
