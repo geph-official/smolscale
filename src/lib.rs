@@ -160,8 +160,13 @@ fn monitor_loop() {
         let before_sleep = POLL_COUNT.count();
         std::thread::sleep(Duration::from_millis(MONITOR_MS));
         let after_sleep = POLL_COUNT.count();
+        let running_tasks = FUTURES_BEING_POLLED.count();
         let running_threads = THREAD_COUNT.load(Ordering::Relaxed);
-        if after_sleep == before_sleep && running_threads <= MAX_THREADS && token_bucket > 0 {
+        if after_sleep == before_sleep
+            && running_threads <= MAX_THREADS
+            && token_bucket > 0
+            && running_tasks >= running_threads
+        {
             start_thread(true, false);
             token_bucket -= 1;
         }
@@ -202,6 +207,8 @@ struct WrappedFuture<T, F: Future<Output = T>> {
 
 static ACTIVE_TASKS: Lazy<FastCounter> = Lazy::new(Default::default);
 
+static FUTURES_BEING_POLLED: Lazy<FastCounter> = Lazy::new(Default::default);
+
 /// Returns the current number of active tasks.
 pub fn active_task_count() -> usize {
     ACTIVE_TASKS.count()
@@ -224,12 +231,11 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         POLL_COUNT.incr();
-        let start = Instant::now();
+        FUTURES_BEING_POLLED.incr();
+        scopeguard::defer!(FUTURES_BEING_POLLED.decr());
 
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };
-        let res = fut.poll(cx);
-        log::trace!("poll took {:?}", start.elapsed());
-        res
+        fut.poll(cx)
     }
 }
 
