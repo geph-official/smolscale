@@ -64,7 +64,7 @@ pub use executor::*;
 pub use nursery::*;
 
 //const CHANGE_THRESH: u32 = 10;
-const MONITOR_MS: u64 = 5;
+const MONITOR_MS: u64 = 20;
 
 const MAX_THREADS: usize = 1500;
 
