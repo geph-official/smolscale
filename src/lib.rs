@@ -138,7 +138,7 @@ fn monitor_loop() {
             })
             .expect("cannot spawn thread");
     }
-    if SINGLE_THREAD.load(Ordering::Relaxed) {
+    if SINGLE_THREAD.load(Ordering::Relaxed) || std::env::var("SMOLSCALE_SINGLE").is_ok() {
         start_thread(false, true);
         return;
     } else {
