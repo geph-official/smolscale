@@ -51,7 +51,7 @@ impl Executor {
                         Err(runnable)
                     } else {
                         // this is great
-                        // eprintln!("scheduled locally");
+                        log::trace!("scheduled locally");
                         unsafe { tls.schedule_local(runnable) }?;
                         Ok(())
                     }
@@ -62,7 +62,7 @@ impl Executor {
             });
             if let Err(runnable) = local_success {
                 // fall back to global queue
-                // eprintln!("scheduled globally");
+                log::trace!("scheduled globally");
                 // let bt = Backtrace::new();
                 // println!("{:?}", bt);
                 global_queue.push(runnable);
@@ -153,7 +153,7 @@ impl Worker {
     #[inline]
     pub async fn run(&mut self) {
         self.set_tls();
-        let mut is_global = false;
+        let mut is_global = true;
         loop {
             let global = std::mem::replace(
                 &mut self.global_notifier_handle,
