@@ -5,15 +5,16 @@ use std::{
 
 use async_task::Runnable;
 use crossbeam_deque::{Injector, Steal, Stealer};
-use event_listener::{Event, EventListener};
 use futures_intrusive::sync::ManualResetEvent;
 use futures_lite::{Future, FutureExt};
 use slab::Slab;
 
+type NotifyChan = futures_intrusive::channel::Channel<(), [(); 1]>;
+
 /// A self-contained executor context.
 pub struct Executor {
     global_queue: Arc<Injector<Runnable>>,
-    global_notifier: Arc<Event>,
+    global_notifier: Arc<NotifyChan>,
     stealers: Arc<RwLock<Slab<Stealer<Runnable>>>>,
 }
 
@@ -28,7 +29,7 @@ impl Executor {
     pub fn new() -> Self {
         Self {
             global_queue: Arc::new(Injector::new()),
-            global_notifier: Arc::new(Event::new()),
+            global_notifier: futures_intrusive::channel::Channel::new().into(),
             stealers: Default::default(),
         }
     }
@@ -66,7 +67,7 @@ impl Executor {
                 // let bt = Backtrace::new();
                 // println!("{:?}", bt);
                 global_queue.push(runnable);
-                global_evt.notify(1);
+                let _ = global_evt.try_send(());
             }
         });
         runnable.schedule();
@@ -84,7 +85,6 @@ impl Executor {
             local_queue,
             local_notifier: notifier,
             global_notifier: self.global_notifier.clone(),
-            global_notifier_handle: self.global_notifier.listen(),
             global_queue: self.global_queue.clone(),
             stealers: self.stealers.clone(),
         }
@@ -93,7 +93,7 @@ impl Executor {
     /// Rebalance the executor. Can/should be called from a monitor thread.
     pub fn rebalance(&self) {
         // all we need to do is to notify something.
-        self.global_notifier.notify(usize::MAX);
+        let _ = self.global_notifier.try_send(());
     }
 }
 
@@ -131,8 +131,7 @@ pub struct Worker {
 
     local_queue: crossbeam_deque::Worker<Runnable>,
     local_notifier: Arc<ManualResetEvent>,
-    global_notifier: Arc<Event>,
-    global_notifier_handle: EventListener,
+    global_notifier: Arc<NotifyChan>,
     global_queue: Arc<Injector<Runnable>>,
     stealers: Arc<RwLock<Slab<Stealer<Runnable>>>>,
 }
@@ -144,7 +143,6 @@ impl Drop for Worker {
         while let Some(task) = self.local_queue.pop() {
             self.global_queue.push(task);
         }
-        self.global_notifier.notify(usize::MAX);
     }
 }
 
@@ -155,10 +153,6 @@ impl Worker {
         self.set_tls();
         let mut is_global = true;
         loop {
-            let global = std::mem::replace(
-                &mut self.global_notifier_handle,
-                self.global_notifier.listen(),
-            );
             self.set_tls();
             while let Some(task) = self.run_once(is_global) {
                 task.run();
@@ -169,8 +163,8 @@ impl Worker {
                 local.await;
                 false
             }
-            .race(async {
-                global.await;
+            .or(async {
+                let _ = self.global_notifier.receive().await;
                 true
             })
             .await;

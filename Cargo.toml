@@ -34,6 +34,7 @@ futures-intrusive = "0.4"
 thread_local="1"
 cache-padded="1"
 crossbeam-deque = "0.8.1"
+flume = "0.10.12"
 # stacker="0.1"
 # parking_lot = "0.11.1"
 
