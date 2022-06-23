@@ -156,6 +156,9 @@ impl Worker {
             self.set_tls();
             while let Some(task) = self.run_once(is_global) {
                 task.run();
+                if is_global {
+                    let _ = self.global_notifier.try_send(());
+                }
             }
             futures_lite::future::yield_now().await;
             let local = self.local_notifier.wait();
@@ -181,10 +184,6 @@ impl Worker {
                 }
             }
         });
-        // // // self.local_queue.pop()
-        // if let Some(task) = self.local_queue.pop() {
-        //     return Some(task);
-        // }
         if is_global {
             self.steal_global();
         }
