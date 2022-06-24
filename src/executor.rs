@@ -49,14 +49,15 @@ impl Executor {
             // attempt to spawn onto the worker that last ran
             let local_success: Result<(), Runnable> = TLS.with(|tls| {
                 if let Some(tls) = tls.borrow_mut().as_mut() {
-                    if *SMOLSCALE_ALWAYS_STEAL || !Arc::ptr_eq(&tls.global_queue, &global_queue) {
+                    if !Arc::ptr_eq(&tls.global_queue, &global_queue) {
                         // shoot, does not belong to this executor
                         // log::trace!("oh no doesn't belong");
                         Err(runnable)
                     } else {
-                        // this is great
-                        log::trace!("scheduled locally");
                         unsafe { tls.schedule_local(runnable) }?;
+                        if *SMOLSCALE_ALWAYS_STEAL {
+                            let _ = global_evt.try_send(());
+                        }
                         Ok(())
                     }
                 } else {
