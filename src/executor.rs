@@ -7,9 +7,10 @@ use async_task::Runnable;
 use crossbeam_deque::{Injector, Steal, Stealer};
 use futures_intrusive::sync::ManualResetEvent;
 use futures_lite::{Future, FutureExt};
+use once_cell::sync::Lazy;
 use slab::Slab;
 
-type NotifyChan = futures_intrusive::channel::Channel<(), [(); 1]>;
+type NotifyChan = futures_intrusive::channel::Channel<(), [(); 4]>;
 
 /// A self-contained executor context.
 pub struct Executor {
@@ -40,13 +41,15 @@ impl Executor {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
+        static SMOLSCALE_ALWAYS_STEAL: Lazy<bool> =
+            Lazy::new(|| std::env::var("SMOLSCALE_ALWAYS_STEAL").is_ok());
         let global_queue = self.global_queue.clone();
         let global_evt = self.global_notifier.clone();
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             // attempt to spawn onto the worker that last ran
             let local_success: Result<(), Runnable> = TLS.with(|tls| {
                 if let Some(tls) = tls.borrow_mut().as_mut() {
-                    if !Arc::ptr_eq(&tls.global_queue, &global_queue) {
+                    if *SMOLSCALE_ALWAYS_STEAL || !Arc::ptr_eq(&tls.global_queue, &global_queue) {
                         // shoot, does not belong to this executor
                         // log::trace!("oh no doesn't belong");
                         Err(runnable)
