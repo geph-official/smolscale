@@ -80,7 +80,7 @@ impl Executor {
 
     /// Obtains a new worker.
     pub fn worker(&self) -> Worker {
-        let local_queue = crossbeam_deque::Worker::new_fifo();
+        let local_queue = crossbeam_deque::Worker::new_lifo();
         let stealer = local_queue.stealer();
         let notifier = Arc::new(ManualResetEvent::new(false));
         let worker_id = self.stealers.write().unwrap().insert(stealer);
@@ -124,6 +124,9 @@ impl TlsState {
     #[inline]
     unsafe fn schedule_local(&mut self, task: Runnable) -> Result<(), Runnable> {
         *self.counter.get() += 1;
+        if *self.counter.get() % 256 == 0 {
+            return Err(task);
+        }
         self.inner_sender.push(task);
         self.local_notifier.set();
         Ok(())
