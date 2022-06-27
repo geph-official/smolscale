@@ -108,8 +108,9 @@ fn ping_pong(b: &mut criterion::Bencher) {
             os.send(0u8).ok()?;
         }
     });
-    b.iter(move || {
-        future::block_on(async {
+    b.iter(|| {
+        let send = send.clone();
+        smolscale::block_on(async move {
             for _ in 0..NUM_PINGS {
                 let (os_send, os_recv) = async_oneshot::oneshot();
                 send.send(os_send).await.unwrap();
@@ -117,6 +118,33 @@ fn ping_pong(b: &mut criterion::Bencher) {
             }
         });
     });
+}
+
+fn fanout(b: &mut criterion::Bencher) {
+    const NUM_TASKS: usize = 1_000;
+    const NUM_ITER: usize = 1_000;
+
+    let (send, recv) = async_channel::bounded(1);
+    let tasks = (0..NUM_TASKS)
+        .map(|i| {
+            let recv = recv.clone();
+            spawn(async move {
+                for ctr in 0.. {
+                    if recv.recv().await.is_err() {
+                        return;
+                    }
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    b.iter(|| {
+        let send = send.clone();
+        smolscale::block_on(async move {
+            for _ in 0..NUM_ITER {
+                send.send(()).await.unwrap();
+            }
+        })
+    })
 }
 
 fn context_switch_quiet(b: &mut criterion::Bencher) {
@@ -176,6 +204,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("spawn_one", spawn_one);
     c.bench_function("spawn_many", spawn_many);
     c.bench_function("yield_now", yield_now);
+    c.bench_function("fanout", fanout);
     // c.bench_function("busy_loops", busy_loops);
     c.bench_function("ping_pong", ping_pong);
     c.bench_function("spawn_executors_recursively", spawn_executors_recursively);

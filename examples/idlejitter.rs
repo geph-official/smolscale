@@ -25,7 +25,7 @@ fn main() {
             async_io::Timer::after(Duration::from_millis(1)).await;
             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
             accum = accum * 0.99 + elapsed_ms * 0.01;
-            if iter % 1000 == 0 {
+            if iter % 100 == 0 {
                 eprintln!("drift {} µs", (accum - 1.0) * 1000.0)
             }
         }
