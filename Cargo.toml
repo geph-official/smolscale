@@ -1,6 +1,6 @@
 [package]
 name = "smolscale"
-version = "0.3.30"
+version = "0.3.31"
 authors = ["nullchinchilla <nullchinchilla@pm.me>"]
 edition = "2018"
 description="A global, auto-scaling, preemptive scheduler"
