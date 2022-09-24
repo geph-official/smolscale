@@ -81,6 +81,8 @@ static MONITOR: OnceCell<std::thread::JoinHandle<()>> = OnceCell::new();
 
 static SINGLE_THREAD: AtomicBool = AtomicBool::new(false);
 
+static SMOLSCALE_USE_AGEX: Lazy<bool> = Lazy::new(|| std::env::var("SMOLSCALE_USE_AGEX").is_ok());
+
 /// Irrevocably puts smolscale into single-threaded mode.
 pub fn permanently_single_threaded() {
     SINGLE_THREAD.store(true, Ordering::Relaxed);
@@ -101,6 +103,9 @@ fn start_monitor() {
 }
 
 fn monitor_loop() {
+    if *SMOLSCALE_USE_AGEX {
+        return;
+    }
     fn start_thread(exitable: bool, process_io: bool) {
         THREAD_COUNT.fetch_add(1, Ordering::Relaxed);
         std::thread::Builder::new()
@@ -185,8 +190,6 @@ pub fn block_on<T: Send + 'static>(future: impl Future<Output = T> + Send + 'sta
 pub fn spawn<T: Send + 'static>(
     future: impl Future<Output = T> + Send + 'static,
 ) -> async_executor::Task<T> {
-    static SMOLSCALE_USE_AGEX: Lazy<bool> =
-        Lazy::new(|| std::env::var("SMOLSCALE_USE_AGEX").is_ok());
     start_monitor();
     if *SMOLSCALE_USE_AGEX {
         async_global_executor::spawn(future)
