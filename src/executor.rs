@@ -185,7 +185,7 @@ impl Worker {
                 false
             }
             .or(async {
-                let _ = self.global_notifier.receive().await.unwrap();
+                self.global_notifier.receive().await.unwrap();
                 true
             })
             .await;

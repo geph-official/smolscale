@@ -185,8 +185,14 @@ pub fn block_on<T: Send + 'static>(future: impl Future<Output = T> + Send + 'sta
 pub fn spawn<T: Send + 'static>(
     future: impl Future<Output = T> + Send + 'static,
 ) -> async_executor::Task<T> {
+    static SMOLSCALE_USE_AGEX: Lazy<bool> =
+        Lazy::new(|| std::env::var("SMOLSCALE_USE_AGEX").is_ok());
     start_monitor();
-    EXEC.spawn(WrappedFuture::new(future))
+    if *SMOLSCALE_USE_AGEX {
+        async_global_executor::spawn(future)
+    } else {
+        EXEC.spawn(WrappedFuture::new(future))
+    }
     // async_global_executor::spawn(future)
 }
 
