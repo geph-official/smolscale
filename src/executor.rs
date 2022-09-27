@@ -1,5 +1,5 @@
 use std::{
-    cell::{RefCell, UnsafeCell},
+    cell::RefCell,
     sync::{Arc, RwLock},
 };
 
@@ -10,7 +10,7 @@ use futures_lite::{Future, FutureExt};
 use once_cell::sync::Lazy;
 use slab::Slab;
 
-type NotifyChan = futures_intrusive::channel::Channel<(), [(); 4]>;
+type NotifyChan = futures_intrusive::channel::Channel<(), [(); 256]>;
 
 /// A self-contained executor context.
 pub struct Executor {
@@ -105,7 +105,6 @@ struct TlsState {
     inner_sender: Vec<Runnable>,
     local_notifier: Arc<ManualResetEvent>,
     global_queue: Arc<Injector<Runnable>>, // for identification purposes
-    counter: UnsafeCell<usize>,
 }
 
 impl Drop for TlsState {
@@ -119,10 +118,10 @@ impl Drop for TlsState {
 impl TlsState {
     #[inline]
     unsafe fn schedule_local(&mut self, task: Runnable) -> Result<(), Runnable> {
-        *self.counter.get() += 1;
-        if *self.counter.get() % 256 == 0 {
-            return Err(task);
-        }
+        // *self.counter.get() += 1;
+        // if *self.counter.get() % 256 == 0 {
+        //     return Err(task);
+        // }
         self.inner_sender.push(task);
         self.local_notifier.set();
         Ok(())
@@ -157,7 +156,7 @@ impl Worker {
             Lazy::new(|| std::env::var("SMOLSCALE_ALWAYS_STEAL").is_ok());
 
         self.set_tls();
-        let mut is_global = true;
+        // let mut is_global = true;
         loop {
             self.set_tls();
             TLS.with(|tls| {
@@ -168,19 +167,26 @@ impl Worker {
                 }
             });
 
-            while let Some((task, _is_stolen)) = self.run_once(is_global) {
-                // sibling notification
-                if is_global || *SMOLSCALE_ALWAYS_STEAL {
-                    // eprintln!("SIBLING {}", iteration);
+            while let Some((task, _is_stolen)) = self.run_once() {
+                if task.run() {
                     let _ = self.global_notifier.try_send(());
-                } else {
-                    // eprintln!("no sib");
                 }
-                task.run();
+                // let _ = self.global_notifier.try_send(());
+                // // sibling notification
+                // // if is_global || *SMOLSCALE_ALWAYS_STEAL {
+                // //     // eprintln!("SIBLING {}", iteration);
+                // //     let _ = self.global_notifier.try_send(());
+                // // } else {
+                // //     // eprintln!("no sib");
+                // // }
+                // if task.run() {
+                //     // let _ = self.global_notifier.try_send(());
+                // }
             }
             futures_lite::future::yield_now().await;
+
             let local = self.local_notifier.wait();
-            is_global = async {
+            async {
                 local.await;
                 false
             }
@@ -194,28 +200,32 @@ impl Worker {
     }
 
     #[inline]
-    fn run_once(&mut self, is_global: bool) -> Option<(Runnable, bool)> {
-        if is_global {
-            self.steal_global();
-            // we do work stealing here
-            let stealers = self.stealers.read().unwrap();
-            let mut stealers: Vec<&Stealer<_>> = stealers.iter().map(|(_, s)| s).collect();
-            fastrand::shuffle(&mut stealers);
-            for stealer in stealers {
-                if let Steal::Success(some) = stealer.steal_batch_and_pop(&self.local_queue) {
-                    return Some((some, true));
-                }
-            }
-        }
+    fn run_once(&mut self) -> Option<(Runnable, bool)> {
         if let Some(task) = self.local_queue.pop() {
             return Some((task, false));
+        }
+        self.steal_global();
+        // we do work stealing here
+        let stealers = self.stealers.read().unwrap();
+        let mut stealers: Vec<&Stealer<_>> = stealers.iter().map(|(_, s)| s).collect();
+        fastrand::shuffle(&mut stealers);
+        for stealer in stealers {
+            if let Steal::Success(some) = stealer.steal_batch_and_pop(&self.local_queue) {
+                return Some((some, true));
+            }
         }
         None
     }
 
     #[inline]
-    fn steal_global(&mut self) {
-        while let Steal::Retry = self.global_queue.steal_batch(&self.local_queue) {}
+    fn steal_global(&mut self) -> bool {
+        loop {
+            match self.global_queue.steal_batch(&self.local_queue) {
+                Steal::Empty => return false,
+                Steal::Success(_) => return true,
+                Steal::Retry => (),
+            }
+        }
     }
 
     #[inline]
@@ -227,7 +237,6 @@ impl Worker {
                     inner_sender: Vec::new(),
                     local_notifier: self.local_notifier.clone(),
                     global_queue: self.global_queue.clone(),
-                    counter: Default::default(),
                 });
             }
         })

@@ -55,7 +55,7 @@ use std::{
     sync::atomic::AtomicUsize,
     sync::atomic::{AtomicBool, Ordering},
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::Duration,
 };
 mod executor;
 mod fastcounter;
@@ -64,7 +64,7 @@ pub use executor::*;
 pub use nursery::*;
 
 //const CHANGE_THRESH: u32 = 10;
-const MONITOR_MS: u64 = 20;
+const MONITOR_MS: u64 = 3;
 
 const MAX_THREADS: usize = 1500;
 
@@ -196,19 +196,7 @@ pub fn spawn<T: Send + 'static>(
     } else {
         EXEC.spawn(WrappedFuture::new(future))
     }
-    // async_global_executor::spawn(future)
 }
-
-// /// Spawns a task onto the lazily-initialized thread-local executor.
-// ///
-// /// The task should **NOT** block or run CPU-intensive code
-// pub fn spawn<T: 'static>(
-//     future: impl Future<Output = T> + 'static,
-// ) -> async_executor::Task<T> {
-//     start_monitor();
-//     LEXEC.with(|v| v.spawn(future))
-//     // async_global_executor::spawn(future)
-// }
 
 struct WrappedFuture<T, F: Future<Output = T>> {
     fut: F,
@@ -222,11 +210,6 @@ static FUTURES_BEING_POLLED: Lazy<FastCounter> = Lazy::new(Default::default);
 pub fn active_task_count() -> usize {
     ACTIVE_TASKS.count()
 }
-
-// /// Returns the current number of running tasks.
-// pub fn running_task_count() -> usize {
-//     FUTURES_BEING_POLLED.count()
-// }
 
 impl<T, F: Future<Output = T>> Drop for WrappedFuture<T, F> {
     fn drop(&mut self) {
