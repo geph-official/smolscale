@@ -47,7 +47,7 @@
 //!                         Performance has regressed.
 //!```
 
-use backtrace::Backtrace;
+use backtrace::{Backtrace, BacktraceFmt};
 use dashmap::DashMap;
 use fastcounter::FastCounter;
 use futures_lite::prelude::*;
@@ -238,16 +238,16 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
         FUTURES_BEING_POLLED.incr();
         scopeguard::defer!(FUTURES_BEING_POLLED.decr());
         let task_id = self.task_id;
-        let weak_btrace = self.spawn_btrace.as_ref().map(Arc::downgrade);
+        let btrace = self.spawn_btrace.as_ref().map(Arc::clone);
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };
-        if *SMOLSCALE_PROFILE {
+        if *SMOLSCALE_PROFILE && fastrand::u64(0..100) == 0 {
             let start = Instant::now();
             let result = fut.poll(cx);
             let elapsed = start.elapsed();
             let mut entry = PROFILE_MAP
                 .entry(task_id)
-                .or_insert_with(|| (weak_btrace.unwrap(), Duration::from_secs(0)));
-            entry.1 += elapsed;
+                .or_insert_with(|| (btrace.unwrap(), Duration::from_secs(0)));
+            entry.1 += elapsed * 100;
             result
         } else {
             fut.poll(cx)
@@ -272,7 +272,7 @@ impl<T, F: Future<Output = T> + 'static> WrappedFuture<T, F> {
 }
 
 /// Profiling map.
-static PROFILE_MAP: Lazy<DashMap<u64, (Weak<Backtrace>, Duration)>> = Lazy::new(|| {
+static PROFILE_MAP: Lazy<DashMap<u64, (Arc<Backtrace>, Duration)>> = Lazy::new(|| {
     std::thread::Builder::new()
         .name("sscale-prof".into())
         .spawn(|| loop {
@@ -284,20 +284,21 @@ static PROFILE_MAP: Lazy<DashMap<u64, (Weak<Backtrace>, Duration)>> = Lazy::new(
             vv.reverse();
             eprintln!("----- SMOLSCALE PROFILE -----");
             let mut tw = TabWriter::new(stderr());
-            writeln!(&mut tw, "TASK ID\tALIVE?\tCPU TIME\tBACKTRACE").unwrap();
+            writeln!(&mut tw, "TASK ID\tCPU TIME\tBACKTRACE").unwrap();
             for (task_id, (bt, duration)) in vv.into_iter().take(20) {
-                writeln!(
-                    &mut tw,
-                    "{}\t{}\t{:?}\t{}",
-                    task_id,
-                    bt.strong_count(),
-                    duration,
-                    if let Some(bt) = bt.upgrade() {
-                        format!("{:?}", bt)
-                    } else {
-                        "(unavailable)".to_string()
-                    }
-                )
+                writeln!(&mut tw, "{}\t{:?}\t{}", task_id, duration, {
+                    let s = format!("{:?}", bt);
+                    format!(
+                        "{:?}",
+                        s.lines()
+                            .filter(|l| !l.contains("smolscale")
+                                && !l.contains("spawn")
+                                && !l.contains("runtime"))
+                            .take(2)
+                            .map(|s| s.trim())
+                            .collect::<Vec<_>>()
+                    )
+                })
                 .unwrap();
             }
             tw.flush().unwrap();
