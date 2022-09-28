@@ -47,16 +47,24 @@
 //!                         Performance has regressed.
 //!```
 
+use backtrace::Backtrace;
+use dashmap::DashMap;
 use fastcounter::FastCounter;
 use futures_lite::prelude::*;
 use once_cell::sync::{Lazy, OnceCell};
+use std::io::Write;
 use std::{
+    io::stderr,
     pin::Pin,
     sync::atomic::AtomicUsize,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Weak,
+    },
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
+use tabwriter::TabWriter;
 mod executor;
 mod fastcounter;
 mod nursery;
@@ -82,6 +90,8 @@ static MONITOR: OnceCell<std::thread::JoinHandle<()>> = OnceCell::new();
 static SINGLE_THREAD: AtomicBool = AtomicBool::new(false);
 
 static SMOLSCALE_USE_AGEX: Lazy<bool> = Lazy::new(|| std::env::var("SMOLSCALE_USE_AGEX").is_ok());
+
+static SMOLSCALE_PROFILE: Lazy<bool> = Lazy::new(|| std::env::var("SMOLSCALE_PROFILE").is_ok());
 
 /// Irrevocably puts smolscale into single-threaded mode.
 pub fn permanently_single_threaded() {
@@ -199,6 +209,8 @@ pub fn spawn<T: Send + 'static>(
 }
 
 struct WrappedFuture<T, F: Future<Output = T>> {
+    task_id: u64,
+    spawn_btrace: Option<Arc<Backtrace>>,
     fut: F,
 }
 
@@ -225,15 +237,72 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
         POLL_COUNT.incr();
         FUTURES_BEING_POLLED.incr();
         scopeguard::defer!(FUTURES_BEING_POLLED.decr());
-
+        let task_id = self.task_id;
+        let weak_btrace = self.spawn_btrace.as_ref().map(Arc::downgrade);
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };
-        fut.poll(cx)
+        if *SMOLSCALE_PROFILE {
+            let start = Instant::now();
+            let result = fut.poll(cx);
+            let elapsed = start.elapsed();
+            let mut entry = PROFILE_MAP
+                .entry(task_id)
+                .or_insert_with(|| (weak_btrace.unwrap(), Duration::from_secs(0)));
+            entry.1 += elapsed;
+            result
+        } else {
+            fut.poll(cx)
+        }
     }
 }
 
 impl<T, F: Future<Output = T> + 'static> WrappedFuture<T, F> {
     pub fn new(fut: F) -> Self {
         ACTIVE_TASKS.incr();
-        WrappedFuture { fut }
+        static TASK_ID: AtomicU64 = AtomicU64::new(0);
+        WrappedFuture {
+            task_id: TASK_ID.fetch_add(1, Ordering::Relaxed),
+            spawn_btrace: if *SMOLSCALE_PROFILE {
+                Some(Arc::new(Backtrace::new()))
+            } else {
+                None
+            },
+            fut,
+        }
     }
 }
+
+/// Profiling map.
+static PROFILE_MAP: Lazy<DashMap<u64, (Weak<Backtrace>, Duration)>> = Lazy::new(|| {
+    std::thread::Builder::new()
+        .name("sscale-prof".into())
+        .spawn(|| loop {
+            let mut vv = PROFILE_MAP
+                .iter()
+                .map(|k| (*k.key(), k.value().clone()))
+                .collect::<Vec<_>>();
+            vv.sort_unstable_by_key(|s| s.1 .1);
+            vv.reverse();
+            eprintln!("----- SMOLSCALE PROFILE -----");
+            let mut tw = TabWriter::new(stderr());
+            writeln!(&mut tw, "TASK ID\tALIVE?\tCPU TIME\tBACKTRACE").unwrap();
+            for (task_id, (bt, duration)) in vv.into_iter().take(20) {
+                writeln!(
+                    &mut tw,
+                    "{}\t{}\t{:?}\t{}",
+                    task_id,
+                    bt.strong_count(),
+                    duration,
+                    if let Some(bt) = bt.upgrade() {
+                        format!("{:?}", bt)
+                    } else {
+                        "(unavailable)".to_string()
+                    }
+                )
+                .unwrap();
+            }
+            tw.flush().unwrap();
+            std::thread::sleep(Duration::from_secs(1));
+        })
+        .unwrap();
+    Default::default()
+});
