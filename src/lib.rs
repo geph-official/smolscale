@@ -262,10 +262,13 @@ impl<T, F: Future<Output = T> + 'static> WrappedFuture<T, F> {
     pub fn new(fut: F) -> Self {
         ACTIVE_TASKS.incr();
         static TASK_ID: AtomicU64 = AtomicU64::new(0);
+        let task_id = TASK_ID.fetch_add(1, Ordering::Relaxed);
         WrappedFuture {
-            task_id: TASK_ID.fetch_add(1, Ordering::Relaxed),
+            task_id,
             spawn_btrace: if *SMOLSCALE_PROFILE {
-                Some(Arc::new(Backtrace::new()))
+                let bt = Arc::new(Backtrace::new());
+                PROFILE_MAP.insert(task_id, (bt.clone(), Duration::from_secs(0)));
+                Some(bt)
             } else {
                 None
             },
