@@ -287,9 +287,9 @@ static PROFILE_MAP: Lazy<DashMap<u64, (Arc<Backtrace>, Duration)>> = Lazy::new(|
             vv.reverse();
             eprintln!("----- SMOLSCALE PROFILE -----");
             let mut tw = TabWriter::new(stderr());
-            writeln!(&mut tw, "TASK ID\tCPU TIME\tBACKTRACE").unwrap();
-            for (task_id, (bt, duration)) in vv.into_iter() {
-                writeln!(&mut tw, "{}\t{:?}\t{}", task_id, duration, {
+            writeln!(&mut tw, "INDEX\tTASK ID\tCPU TIME\tBACKTRACE").unwrap();
+            for (count, (task_id, (bt, duration))) in vv.into_iter().enumerate() {
+                writeln!(&mut tw, "{}\t{}\t{:?}\t{}", count, task_id, duration, {
                     let s = format!("{:?}", bt);
                     format!(
                         "{:?}",
