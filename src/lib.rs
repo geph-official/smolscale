@@ -226,6 +226,9 @@ pub fn active_task_count() -> usize {
 impl<T, F: Future<Output = T>> Drop for WrappedFuture<T, F> {
     fn drop(&mut self) {
         ACTIVE_TASKS.decr();
+        if *SMOLSCALE_PROFILE {
+            PROFILE_MAP.remove(&self.task_id);
+        }
     }
 }
 
