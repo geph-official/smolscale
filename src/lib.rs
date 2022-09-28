@@ -290,25 +290,33 @@ static PROFILE_MAP: Lazy<DashMap<u64, (Arc<Backtrace>, Duration)>> = Lazy::new(|
             vv.reverse();
             eprintln!("----- SMOLSCALE PROFILE -----");
             let mut tw = TabWriter::new(stderr());
-            writeln!(&mut tw, "INDEX\tTASK ID\tCPU TIME\tBACKTRACE").unwrap();
+            writeln!(&mut tw, "INDEX\tTOTAL\tTASK ID\tCPU TIME\tBACKTRACE").unwrap();
             for (count, (task_id, (bt, duration))) in vv.into_iter().enumerate() {
-                writeln!(&mut tw, "{}\t{}\t{:?}\t{}", count, task_id, duration, {
-                    let s = format!("{:?}", bt);
-                    format!(
-                        "{:?}",
-                        s.lines()
-                            .filter(|l| !l.contains("smolscale")
-                                && !l.contains("spawn")
-                                && !l.contains("runtime"))
-                            .take(2)
-                            .map(|s| s.trim())
-                            .collect::<Vec<_>>()
-                    )
-                })
+                writeln!(
+                    &mut tw,
+                    "{}\t{}\t{}\t{:?}\t{}",
+                    count,
+                    ACTIVE_TASKS.count(),
+                    task_id,
+                    duration,
+                    {
+                        let s = format!("{:?}", bt);
+                        format!(
+                            "{:?}",
+                            s.lines()
+                                .filter(|l| !l.contains("smolscale")
+                                    && !l.contains("spawn")
+                                    && !l.contains("runtime"))
+                                .take(2)
+                                .map(|s| s.trim())
+                                .collect::<Vec<_>>()
+                        )
+                    }
+                )
                 .unwrap();
             }
             tw.flush().unwrap();
-            std::thread::sleep(Duration::from_secs(60));
+            std::thread::sleep(Duration::from_secs(10));
         })
         .unwrap();
     Default::default()
