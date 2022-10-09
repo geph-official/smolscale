@@ -46,20 +46,22 @@ impl Executor {
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             // attempt to spawn onto the worker that last ran
             let local_success: Result<(), Runnable> = TLS.with(|tls| {
-                if let Some(tls) = tls.borrow_mut().as_mut() {
-                    if !Arc::ptr_eq(&tls.global_queue, &global_queue) {
-                        // shoot, does not belong to this executor
-                        // log::trace!("oh no doesn't belong");
-                        Err(runnable)
-                    } else {
-                        log::trace!("scheduling locally");
-                        unsafe { tls.schedule_local(runnable) }?;
-                        Ok(())
+                if let Ok(mut tls) = tls.try_borrow_mut() {
+                    let tls = tls.as_mut();
+                    if let Some(tls) = tls {
+                        if !Arc::ptr_eq(&tls.global_queue, &global_queue) {
+                            // shoot, does not belong to this executor
+                            // log::trace!("oh no doesn't belong");
+                            return Err(runnable);
+                        } else {
+                            log::trace!("scheduling locally");
+                            unsafe { tls.schedule_local(runnable) }?;
+                            return Ok(());
+                        }
                     }
-                } else {
-                    log::trace!("no TLS");
-                    Err(runnable)
                 }
+                log::trace!("no TLS");
+                Err(runnable)
             });
             if let Err(runnable) = local_success {
                 // fall back to global queue
