@@ -160,44 +160,46 @@ impl Worker {
         self.set_tls();
         // let mut is_global = true;
         loop {
-            self.set_tls();
-            TLS.with(|tls| {
-                if let Some(tls) = tls.borrow_mut().as_mut() {
-                    for task in tls.inner_sender.drain(0..) {
-                        self.local_queue.push(task);
+            for _ in 0..200 {
+                self.set_tls();
+                TLS.with(|tls| {
+                    if let Some(tls) = tls.borrow_mut().as_mut() {
+                        for task in tls.inner_sender.drain(0..) {
+                            self.local_queue.push(task);
+                        }
                     }
-                }
-            });
+                });
 
-            while let Some((task, _is_stolen)) = self.run_once() {
-                if task.run() {
-                    let _ = self.global_notifier.try_send(());
+                while let Some((task, _is_stolen)) = self.run_once() {
+                    if task.run() {
+                        let _ = self.global_notifier.try_send(());
+                    }
+                    // let _ = self.global_notifier.try_send(());
+                    // // sibling notification
+                    // // if is_global || *SMOLSCALE_ALWAYS_STEAL {
+                    // //     // eprintln!("SIBLING {}", iteration);
+                    // //     let _ = self.global_notifier.try_send(());
+                    // // } else {
+                    // //     // eprintln!("no sib");
+                    // // }
+                    // if task.run() {
+                    //     // let _ = self.global_notifier.try_send(());
+                    // }
                 }
-                // let _ = self.global_notifier.try_send(());
-                // // sibling notification
-                // // if is_global || *SMOLSCALE_ALWAYS_STEAL {
-                // //     // eprintln!("SIBLING {}", iteration);
-                // //     let _ = self.global_notifier.try_send(());
-                // // } else {
-                // //     // eprintln!("no sib");
-                // // }
-                // if task.run() {
-                //     // let _ = self.global_notifier.try_send(());
-                // }
+
+                let local = self.local_notifier.wait();
+                async {
+                    local.await;
+                    false
+                }
+                .or(async {
+                    self.global_notifier.receive().await.unwrap();
+                    true
+                })
+                .await;
+                self.local_notifier.reset();
             }
             futures_lite::future::yield_now().await;
-
-            let local = self.local_notifier.wait();
-            async {
-                local.await;
-                false
-            }
-            .or(async {
-                self.global_notifier.receive().await.unwrap();
-                true
-            })
-            .await;
-            self.local_notifier.reset();
         }
     }
 
