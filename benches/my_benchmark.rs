@@ -34,34 +34,6 @@ fn spawn_many(b: &mut criterion::Bencher) {
     });
 }
 
-fn spawn_executors_recursively(b: &mut criterion::Bencher) {
-    #[allow(clippy::manual_async_fn)]
-    fn go(i: usize) -> impl Future<Output = ()> + Send + 'static {
-        async move {
-            if i != 0 {
-                let exec = async_executor::Executor::new();
-                let task = exec.spawn(async move {
-                    let fut = go(i - 1).boxed();
-                    fut.await;
-                });
-                exec.run(task).await
-            }
-        }
-    }
-
-    b.iter(move || {
-        future::block_on(async {
-            let mut tasks = Vec::new();
-            for _ in 0..TASKS {
-                tasks.push(spawn(go(STEPS)));
-            }
-            for task in tasks {
-                task.await;
-            }
-        });
-    });
-}
-
 fn yield_now(b: &mut criterion::Bencher) {
     b.iter(move || {
         future::block_on(async {
@@ -125,11 +97,11 @@ fn fanout(b: &mut criterion::Bencher) {
     const NUM_ITER: usize = 1_000;
 
     let (send, recv) = async_channel::bounded(1);
-    let tasks = (0..NUM_TASKS)
-        .map(|i| {
+    let _tasks = (0..NUM_TASKS)
+        .map(|_i| {
             let recv = recv.clone();
             spawn(async move {
-                for ctr in 0.. {
+                for _ctr in 0.. {
                     if recv.recv().await.is_err() {
                         return;
                     }
@@ -201,13 +173,14 @@ fn context_switch_busy(b: &mut criterion::Bencher) {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
+    let _ = env_logger::try_init();
     c.bench_function("spawn_one", spawn_one);
     c.bench_function("spawn_many", spawn_many);
     c.bench_function("yield_now", yield_now);
     c.bench_function("fanout", fanout);
     // c.bench_function("busy_loops", busy_loops);
     c.bench_function("ping_pong", ping_pong);
-    c.bench_function("spawn_executors_recursively", spawn_executors_recursively);
+
     c.bench_function("context_switch_quiet", context_switch_quiet);
     c.bench_function("context_switch_busy", context_switch_busy);
 }

@@ -47,7 +47,7 @@
 //!                         Performance has regressed.
 //!```
 
-use backtrace::{Backtrace, BacktraceFmt};
+use backtrace::Backtrace;
 use dashmap::DashMap;
 use fastcounter::FastCounter;
 use futures_lite::prelude::*;
@@ -59,7 +59,7 @@ use std::{
     sync::atomic::AtomicUsize,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Weak,
+        Arc,
     },
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -67,19 +67,14 @@ use std::{
 use tabwriter::TabWriter;
 mod executor;
 mod fastcounter;
-mod nursery;
+mod new_executor;
+mod queues;
 pub use executor::*;
-pub use nursery::*;
 
 //const CHANGE_THRESH: u32 = 10;
 const MONITOR_MS: u64 = 3;
 
 const MAX_THREADS: usize = 1500;
-
-// thread_local! {
-//     static LEXEC: Rc<async_executor::LocalExecutor<'static>> = Rc::new(async_executor::LocalExecutor::new())
-// }
-static EXEC: Lazy<Executor> = Lazy::new(Executor::new);
 
 static POLL_COUNT: Lazy<FastCounter> = Lazy::new(Default::default);
 
@@ -135,14 +130,13 @@ fn monitor_loop() {
                     });
                     // let run_local = local_exec.run(futures_lite::future::pending::<()>());
                     if exitable {
-                        EXEC.worker()
-                            .run()
+                        new_executor::run_local_queue()
                             .or(async {
                                 async_io::Timer::after(Duration::from_secs(3)).await;
                             })
                             .await;
                     } else {
-                        EXEC.worker().run().await;
+                        new_executor::run_local_queue().await;
                     };
                 };
                 if process_io {
@@ -168,7 +162,7 @@ fn monitor_loop() {
         if count % 100 == 0 && token_bucket < 100 {
             token_bucket += 1
         }
-        EXEC.rebalance();
+        new_executor::global_rebalance();
         if SINGLE_THREAD.load(Ordering::Relaxed) {
             return;
         }
@@ -204,7 +198,7 @@ pub fn spawn<T: Send + 'static>(
     if *SMOLSCALE_USE_AGEX {
         async_global_executor::spawn(future)
     } else {
-        EXEC.spawn(WrappedFuture::new(future))
+        new_executor::spawn(WrappedFuture::new(future))
     }
 }
 
