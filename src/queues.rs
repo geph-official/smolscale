@@ -15,7 +15,7 @@ pub struct GlobalQueue {
     queue: SegQueue<Runnable>,
     stealers: ShardedLock<FxHashMap<u64, Stealer<Runnable, B1024>>>,
     id_ctr: AtomicU64,
-    notify: Event,
+    event: Event,
 }
 
 impl GlobalQueue {
@@ -25,19 +25,19 @@ impl GlobalQueue {
             queue: Default::default(),
             stealers: Default::default(),
             id_ctr: AtomicU64::new(0),
-            notify: Event::new(),
+            event: Event::new(),
         }
     }
 
     /// Pushes a task to the GlobalQueue, notifying at least one [LocalQueue].  
     pub fn push(&self, task: Runnable) {
         self.queue.push(task);
-        self.notify.notify(1);
+        self.event.notify(1);
     }
 
     /// Rebalances the executor.
     pub fn rebalance(&self) {
-        self.notify.notify_additional_relaxed(usize::MAX);
+        self.event.notify_relaxed(1);
     }
 
     /// Subscribes to tasks, returning a LocalQueue.
@@ -55,7 +55,7 @@ impl GlobalQueue {
 
     /// Wait for activity
     pub fn wait(&self) -> EventListener {
-        self.notify.listen()
+        self.event.listen()
     }
 }
 
@@ -80,10 +80,15 @@ impl<'a> Drop for LocalQueue<'a> {
 impl<'a> LocalQueue<'a> {
     /// Pops a task from the local queue, other local queues, or the global queue.
     pub fn pop(&self) -> Option<Runnable> {
-        self.local
+        let res = self
+            .local
             .pop()
             .or_else(|| self.steal_and_pop())
-            .or_else(|| self.global.queue.pop())
+            .or_else(|| self.global.queue.pop());
+        if res.is_some() {
+            self.global.event.notify(1);
+        }
+        res
     }
 
     /// Pushes an item to the local queue, falling back to the global queue if the local queue is full.
