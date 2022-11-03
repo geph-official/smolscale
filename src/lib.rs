@@ -65,6 +65,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tabwriter::TabWriter;
+
 mod executor;
 mod fastcounter;
 mod new_executor;

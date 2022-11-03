@@ -13,6 +13,7 @@ use slab::Slab;
 type NotifyChan = futures_intrusive::channel::Channel<(), [(); 256]>;
 
 /// A self-contained executor context.
+#[deprecated]
 pub struct Executor {
     global_queue: Arc<Injector<Runnable>>,
     global_notifier: Arc<NotifyChan>,
@@ -129,7 +130,7 @@ impl TlsState {
         Ok(())
     }
 }
-
+#[deprecated]
 pub struct Worker {
     worker_id: usize,
 
