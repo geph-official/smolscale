@@ -98,13 +98,6 @@ impl<'a> LocalQueue<'a> {
         }
     }
 
-    /// Helper function that runs everything available.
-    pub fn run_all(&self) {
-        while let Some(runnable) = self.pop() {
-            runnable.run();
-        }
-    }
-
     /// Steals a whole batch and pops one.
     fn steal_and_pop(&self) -> Option<Runnable> {
         let stealers = self.global.stealers.read().unwrap();

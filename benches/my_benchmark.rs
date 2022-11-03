@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::future::Future;
 
 use async_executor::Task;
-use futures_lite::{future, prelude::*};
+use futures_lite::future;
 
 const TASKS: usize = 300;
 const STEPS: usize = 300;

@@ -29,7 +29,12 @@ pub async fn run_local_queue() {
             local.reset();
         };
         let evt = local_evt.or(GLOBAL_QUEUE.wait());
-        LOCAL_QUEUE.with(|q| q.run_all());
+        while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
+            r.run();
+            if fastrand::usize(0..256) == 0 {
+                futures_lite::future::yield_now().await;
+            }
+        }
         // wait now, so that when we get woken up, we *know* that something happened to the global queue.
         evt.await;
     }
