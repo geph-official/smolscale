@@ -37,7 +37,7 @@ impl GlobalQueue {
 
     /// Rebalances the executor.
     pub fn rebalance(&self) {
-        self.notify.notify(1);
+        self.notify.notify_additional_relaxed(usize::MAX);
     }
 
     /// Subscribes to tasks, returning a LocalQueue.
