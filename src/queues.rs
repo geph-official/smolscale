@@ -40,7 +40,7 @@ impl GlobalQueue {
 
     /// Rebalances the executor.
     pub fn rebalance(&self) {
-        self.event.notify_relaxed(1);
+        self.event.notify_relaxed(usize::MAX);
     }
 
     /// Subscribes to tasks, returning a LocalQueue.
