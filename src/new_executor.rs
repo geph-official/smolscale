@@ -1,5 +1,9 @@
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
+use async_task::Runnable;
 use futures_intrusive::sync::LocalManualResetEvent;
 use futures_lite::{Future, FutureExt};
 
@@ -13,13 +17,15 @@ thread_local! {
 
     static LOCAL_EVT: Rc<LocalManualResetEvent> = Rc::new(LocalManualResetEvent::new(false));
 
-    static RUNNING: Cell<bool> = Cell::new(false);
+    static LOCAL_QUEUE_ACTIVE: Cell<bool> = Cell::new(false);
+
+    static LOCAL_QUEUE_HOLDING: RefCell<Vec<Runnable>> = RefCell::new(vec![]);
 }
 
 /// Runs a queue
 pub async fn run_local_queue() {
-    RUNNING.with(|r| r.set(true));
-    scopeguard::defer!(RUNNING.with(|r| r.set(false)));
+    LOCAL_QUEUE_ACTIVE.with(|r| r.set(true));
+    scopeguard::defer!(LOCAL_QUEUE_ACTIVE.with(|r| r.set(false)));
     loop {
         // subscribe
         let local_evt = async {
@@ -29,10 +35,12 @@ pub async fn run_local_queue() {
             local.reset();
         };
         let evt = local_evt.or(GLOBAL_QUEUE.wait());
-        while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
-            r.run();
-            if fastrand::usize(0..256) == 0 {
-                futures_lite::future::yield_now().await;
+        {
+            while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
+                r.run();
+                if fastrand::usize(0..256) == 0 {
+                    futures_lite::future::yield_now().await;
+                }
             }
         }
         // wait now, so that when we get woken up, we *know* that something happened to the global queue.
@@ -48,7 +56,7 @@ where
 {
     let (runnable, task) = async_task::spawn(future, |runnable| {
         // if the current thread is not processing tasks, we go to the global queue directly.
-        if !RUNNING.with(|r| r.get()) {
+        if !LOCAL_QUEUE_ACTIVE.with(|r| r.get()) || fastrand::usize(0..512) == 0 {
             GLOBAL_QUEUE.push(runnable);
         } else {
             LOCAL_QUEUE.with(|lq| lq.push(runnable));

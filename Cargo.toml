@@ -41,12 +41,14 @@ async-global-executor={version="2", features=["async-io"]}
 # moka = "0.9.4"
 dashmap = "5.4.0"
 tabwriter = "1.2.1"
-st3 = "0.3.1"
+st3 = "0.4"
 crossbeam-queue = "0.3.6"
 rustc-hash = "1.1.0"
 crossbeam-utils = "0.8.12"
 waker-fn = "1.1.0"
 smallvec = "1.10.0"
+concurrent-queue = "2.0.0"
+parking_lot = "0.12.1"
 
 [profile.release]
 panic = "abort"

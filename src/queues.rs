@@ -1,22 +1,26 @@
 use async_task::Runnable;
-use crossbeam_queue::SegQueue;
+
 use crossbeam_utils::sync::ShardedLock;
 use event_listener::{Event, EventListener};
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use st3::{Stealer, Worker, B1024};
+use st3::fifo::{Stealer, Worker};
 use std::{
     cell::RefCell,
-    sync::atomic::{AtomicU64, Ordering},
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, RwLock,
+    },
 };
 
 /// The global task queue, also including handles for stealing from local queues.
 ///
 /// Tasks can be pushed to it. Popping requires first subscribing to it, producing a [LocalQueue], which then can be popped from.
 pub struct GlobalQueue {
-    queue: SegQueue<Runnable>,
-    stealers: ShardedLock<FxHashMap<u64, Stealer<Runnable, B1024>>>,
+    queue: parking_lot::Mutex<VecDeque<Runnable>>,
+    stealers: ShardedLock<FxHashMap<u64, Stealer<Runnable>>>,
     id_ctr: AtomicU64,
     event: Event,
 }
@@ -34,7 +38,7 @@ impl GlobalQueue {
 
     /// Pushes a task to the GlobalQueue, notifying at least one [LocalQueue].  
     pub fn push(&self, task: Runnable) {
-        self.queue.push(task);
+        self.queue.lock().push_back(task);
         self.event.notify(1);
     }
 
@@ -45,7 +49,7 @@ impl GlobalQueue {
 
     /// Subscribes to tasks, returning a LocalQueue.
     pub fn subscribe(&self) -> LocalQueue<'_> {
-        let worker = Worker::<Runnable, B1024>::new();
+        let worker = Worker::<Runnable>::new(1024);
         let id = self.id_ctr.fetch_add(1, Ordering::Relaxed);
         self.stealers.write().unwrap().insert(id, worker.stealer());
 
@@ -67,7 +71,7 @@ impl GlobalQueue {
 pub struct LocalQueue<'a> {
     id: u64,
     global: &'a GlobalQueue,
-    local: Worker<Runnable, B1024>,
+    local: Worker<Runnable>,
 
     next_task: RefCell<Option<Runnable>>,
 }
@@ -86,17 +90,11 @@ impl<'a> Drop for LocalQueue<'a> {
 impl<'a> LocalQueue<'a> {
     /// Pops a task from the local queue, other local queues, or the global queue.
     pub fn pop(&self) -> Option<Runnable> {
-        let res = self
-            .next_task
+        self.next_task
             .borrow_mut()
             .take()
             .or_else(|| self.local.pop())
             .or_else(|| self.steal_and_pop())
-            .or_else(|| self.global.queue.pop());
-        if res.is_some() && fastrand::usize(0..32) == 0 {
-            self.global.event.notify(1);
-        }
-        res
     }
 
     /// Pushes an item to the local queue, falling back to the global queue if the local queue is full.
@@ -113,16 +111,28 @@ impl<'a> LocalQueue<'a> {
 
     /// Steals a whole batch and pops one.
     fn steal_and_pop(&self) -> Option<Runnable> {
-        let stealers = self.global.stealers.read().unwrap();
-        let mut ids: SmallVec<[u64; 64]> = stealers.keys().copied().collect();
-        fastrand::shuffle(&mut ids);
-        for id in ids {
-            if let Ok((val, count)) =
-                stealers[&id].steal_and_pop(&self.local, |n| (n / 2 + 1).min(32))
-            {
-                log::trace!("{} stole {} from {id}", count + 1, self.id);
-                return Some(val);
+        {
+            let stealers = self.global.stealers.read().unwrap();
+            let mut ids: SmallVec<[u64; 64]> = stealers.keys().copied().collect();
+            fastrand::shuffle(&mut ids);
+            for id in ids {
+                if let Ok((val, count)) =
+                    stealers[&id].steal_and_pop(&self.local, |n| (n / 2 + 1).min(64))
+                {
+                    log::trace!("{} stole {} from {id}", count + 1, self.id);
+                    return Some(val);
+                }
             }
+        }
+
+        // try stealing from the global
+        if let Some(mut global) = self.global.queue.try_lock() {
+            let to_steal = (global.len() / 2 + 1).min(64).min(global.len());
+            for _ in 0..to_steal {
+                let stolen = global.pop_front().unwrap();
+                self.local.push(stolen).expect("should not overflow here")
+            }
+            return self.local.pop();
         }
         None
     }
