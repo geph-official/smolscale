@@ -16,6 +16,11 @@ impl<T: Send + 'static> TaskReaper<T> {
         let _reaper = crate::spawn(reaper_loop(recv_task));
         Self { send_task, _reaper }
     }
+
+    /// Attach a task to this reaper.
+    pub fn attach(&self, task: Task<T>) {
+        let _ = self.send_task.try_send(task);
+    }
 }
 
 async fn reaper_loop<T>(recv_task: Receiver<Task<T>>) {
