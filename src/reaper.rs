@@ -11,7 +11,7 @@ pub struct TaskReaper<T> {
 
 impl<T: Send + 'static> TaskReaper<T> {
     /// Create a new reaper.
-    pub fn new(&self) -> Self {
+    pub fn new() -> Self {
         let (send_task, recv_task) = async_channel::unbounded();
         let _reaper = crate::spawn(reaper_loop(recv_task));
         Self { send_task, _reaper }
