@@ -9,10 +9,7 @@ use st3::fifo::{Stealer, Worker};
 use std::{
     cell::RefCell,
     collections::VecDeque,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex, RwLock,
-    },
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 /// The global task queue, also including handles for stealing from local queues.

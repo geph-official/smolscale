@@ -31,6 +31,7 @@ mod executor;
 mod fastcounter;
 mod new_executor;
 mod queues;
+pub mod reaper;
 pub use executor::*;
 
 //const CHANGE_THRESH: u32 = 10;
