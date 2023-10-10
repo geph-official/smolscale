@@ -127,7 +127,9 @@ impl<'a> LocalQueue<'a> {
             let to_steal = (global.len() / 2 + 1).min(64).min(global.len());
             for _ in 0..to_steal {
                 let stolen = global.pop_front().unwrap();
-                self.local.push(stolen).expect("should not overflow here")
+                if let Err(back) = self.local.push(stolen) {
+                    return Some(back);
+                }
             }
             return self.local.pop();
         }
