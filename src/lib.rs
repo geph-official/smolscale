@@ -165,6 +165,7 @@ pub fn spawn<T: Send + 'static>(
     future: impl Future<Output = T> + Send + 'static,
 ) -> async_executor::Task<T> {
     start_monitor();
+    log::trace!("monitor started");
     if *SMOLSCALE_USE_AGEX {
         async_global_executor::spawn(future)
     } else {
@@ -288,3 +289,12 @@ static PROFILE_MAP: Lazy<DashMap<u64, (Arc<Backtrace>, Duration)>> = Lazy::new(|
         .unwrap();
     Default::default()
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn nested_block_on() {
+        assert_eq!(1u64, block_on(async { block_on(async { 1u64 }) }))
+    }
+}

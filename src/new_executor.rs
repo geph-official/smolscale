@@ -31,7 +31,6 @@ pub async fn run_local_queue() {
         let local_evt = async {
             let local = LOCAL_EVT.with(|le| le.clone());
             local.wait().await;
-            log::debug!("local fired!");
             local.reset();
         };
         let evt = local_evt.or(GLOBAL_QUEUE.wait());
@@ -57,8 +56,10 @@ where
     let (runnable, task) = async_task::spawn(future, |runnable| {
         // if the current thread is not processing tasks, we go to the global queue directly.
         if !LOCAL_QUEUE_ACTIVE.with(|r| r.get()) || fastrand::usize(0..512) == 0 {
+            log::trace!("pushed to global queue");
             GLOBAL_QUEUE.push(runnable);
         } else {
+            log::trace!("pushed to local queue");
             LOCAL_QUEUE.with(|lq| lq.push(runnable));
             LOCAL_EVT.with(|le| le.set());
         }

@@ -54,7 +54,6 @@ impl GlobalQueue {
             id,
             global: self,
             local: worker,
-            next_task: RefCell::new(None),
         }
     }
 
@@ -69,8 +68,7 @@ pub struct LocalQueue<'a> {
     id: u64,
     global: &'a GlobalQueue,
     local: Worker<Runnable>,
-
-    next_task: RefCell<Option<Runnable>>,
+    // next_task: RefCell<Option<Runnable>>,
 }
 
 impl<'a> Drop for LocalQueue<'a> {
@@ -87,22 +85,16 @@ impl<'a> Drop for LocalQueue<'a> {
 impl<'a> LocalQueue<'a> {
     /// Pops a task from the local queue, other local queues, or the global queue.
     pub fn pop(&self) -> Option<Runnable> {
-        self.next_task
-            .borrow_mut()
-            .take()
-            .or_else(|| self.local.pop())
-            .or_else(|| self.steal_and_pop())
+        self.local.pop().or_else(|| self.steal_and_pop())
     }
 
     /// Pushes an item to the local queue, falling back to the global queue if the local queue is full.
     pub fn push(&self, runnable: Runnable) {
-        if let Some(runnable) = self.next_task.borrow_mut().replace(runnable) {
-            if let Err(runnable) = self.local.push(runnable) {
-                log::trace!("{} pushed globally", self.id);
-                self.global.push(runnable);
-            } else {
-                log::trace!("{} pushed locally", self.id);
-            }
+        if let Err(runnable) = self.local.push(runnable) {
+            log::trace!("{} pushed globally", self.id);
+            self.global.push(runnable);
+        } else {
+            log::trace!("{} pushed locally", self.id);
         }
     }
 
