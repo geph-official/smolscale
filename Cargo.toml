@@ -50,6 +50,7 @@ smallvec = "1.10.0"
 parking_lot = "0.12.1"
 futures-util = "0.3.25"
 async-channel = "1.5.1"
+async-compat = "0.2.3"
 
 [profile.release]
 panic = "abort"
