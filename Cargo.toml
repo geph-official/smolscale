@@ -1,6 +1,6 @@
 [package]
 name = "smolscale"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["nullchinchilla <nullchinchilla@pm.me>"]
 edition = "2021"
 description="A high-performance async-task scheduler"
