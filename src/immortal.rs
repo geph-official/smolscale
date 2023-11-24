@@ -46,6 +46,7 @@ impl Immortal {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RespawnStrategy {
     Immediate,
     FixedDelay(Duration),
