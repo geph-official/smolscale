@@ -160,8 +160,6 @@ pub fn block_on<T: Send + 'static>(future: impl Future<Output = T> + Send + 'sta
 }
 
 /// Spawns a task onto the lazily-initialized global executor.
-///
-/// The task can block or run CPU-intensive code if needed --- it will not block other tasks.
 pub fn spawn<T: Send + 'static>(
     future: impl Future<Output = T> + Send + 'static,
 ) -> async_executor::Task<T> {
