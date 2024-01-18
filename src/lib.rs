@@ -154,9 +154,9 @@ fn monitor_loop() {
     unreachable!()
 }
 
-/// Spawns a future onto the global executor and immediately blocks on it.
+/// Spawns a future onto the global executor and immediately blocks on it.`
 pub fn block_on<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) -> T {
-    async_io::block_on(WrappedFuture::new(future))
+    async_io::block_on(WrappedFuture::new(future).compat())
 }
 
 /// Spawns a task onto the lazily-initialized global executor.
