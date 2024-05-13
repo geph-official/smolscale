@@ -1,5 +1,5 @@
 use std::{
-    sync::atomic::AtomicUsize,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
@@ -12,7 +12,7 @@ fn main() {
                 loop {
                     futures_lite::future::yield_now().await;
                     for _ in 0..1000 {
-                        CONTENDER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        CONTENDER.fetch_add(1, Ordering::SeqCst);
                     }
                 }
             })

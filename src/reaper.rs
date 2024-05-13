@@ -29,7 +29,7 @@ async fn reaper_loop<T>(recv_task: Receiver<Task<T>>) {
         let next = async { recv_task.recv().await }
             .or(async {
                 inner.next().await;
-                futures_lite::future::pending().await
+                std::future::pending().await
             })
             .await;
         if let Ok(next) = next {

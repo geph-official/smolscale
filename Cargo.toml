@@ -3,74 +3,55 @@ name = "smolscale"
 version = "0.4.4"
 authors = ["nullchinchilla <nullchinchilla@pm.me>"]
 edition = "2021"
-description="A high-performance async-task scheduler"
-license="ISC"
-repository="https://github.com/geph-official/smolscale"
+description = "A high-performance async-task scheduler"
+license = "ISC"
+repository = "https://github.com/geph-official/smolscale"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-task="4"
-async-executor = "1.4.0"
-once_cell= "1.5.2"
-futures-lite = "1.11.3"
-pin-project-lite = "0.2.1"
-scopeguard= "1.1.0"
-event-listener= "2.5.1"
-async-io= "1.3.1"
-anyhow= "1.0.37"
-
-slab= "0.4.2"
-log= "0.4.16"
-# concurrent-queue="1.2.2"
-num_cpus="1"
-# rtrb="0.1.4"
-# spin={version="0.9", default-features=false, features=["mutex", "spin_mutex"]}
-backtrace="0.3"
-fastrand="1"
-futures-intrusive = "0.4"
-# crossbeam-queue="0.3"
-thread_local="1"
-cache-padded="1"
-crossbeam-deque = "0.8.1"
-flume = "0.10.12"
-# stacker="0.1"
-# parking_lot = "0.11.1"
-async-global-executor={version="2", features=["async-io"]}
-# moka = "0.9.4"
-dashmap = "5.4.0"
-tabwriter = "1.2.1"
+async-task = "4"
+async-executor = "1.11.0"
+once_cell = "1.19.0"
+futures-lite = "2.3.0"
+scopeguard = "1.2.0"
+event-listener = "5.3.0"
+async-io = "2.3.2"
+log = "0.4.21"
+num_cpus = "1"
+backtrace = "0.3"
+fastrand = "2"
+futures-intrusive = "0.5"
+thread_local = "1"
+async-global-executor = { version = "2", features = ["async-io"] }
+dashmap = "5.5.3"
+tabwriter = "1.4.0"
 st3 = "0.4"
-crossbeam-queue = "0.3.6"
 rustc-hash = "1.1.0"
-crossbeam-utils = "0.8.12"
-waker-fn = "1.1.0"
-smallvec = "1.10.0"
-# concurrent-queue = "2.0.0"
-parking_lot = "0.12.1"
-futures-util = "0.3.25"
-async-channel = "1.5.1"
+crossbeam-utils = "0.8.19"
+smallvec = "1.13.2"
+parking_lot = "0.12.2"
+futures-util = "0.3.30"
+async-channel = "2.3.1"
+cfg-if = "1.0.0"
 async-compat = "0.2.3"
 
 [profile.release]
 panic = "abort"
 opt-level = 3
 overflow-checks = true
-debug=2
+debug = 2
 # lto=true
 # codegen-units=1
 
 [dev-dependencies]
-criterion = "0.3"
-env_logger="0.9"
-async-channel= "1.5.1"
-
-async-oneshot= "0.4.2"
+criterion = "0.5"
+env_logger = "0.11"
+async-oneshot = "0.5.9"
 
 [[bench]]
 name = "my_benchmark"
 harness = false
 
 [features]
-# Defines a feature named `webp` that does not enable any other features.
 preempt = []

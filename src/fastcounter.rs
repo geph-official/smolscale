@@ -1,8 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-
-
-
 /// A write-mostly, read-rarely counter
 #[derive(Default, Debug)]
 pub struct FastCounter {
@@ -23,6 +20,7 @@ impl FastCounter {
     }
 
     /// Get the total count
+    #[inline]
     pub fn count(&self) -> usize {
         self.counter.load(Ordering::Relaxed)
     }

@@ -76,7 +76,7 @@ fn ping_pong(b: &mut criterion::Bencher) {
     let (send, recv) = async_channel::bounded::<async_oneshot::Sender<_>>(10);
     let _task: Task<Option<()>> = spawn(async move {
         loop {
-            let os = recv.recv().await.ok()?;
+            let mut os = recv.recv().await.ok()?;
             os.send(0u8).ok()?;
         }
     });
