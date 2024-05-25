@@ -1,7 +1,6 @@
-use std::{convert::Infallible, time::Duration};
+use std::{convert::Infallible, future::Future, time::Duration};
 
 use async_task::Task;
-use futures_lite::Future;
 
 /// Immortal represents a task that can never stop, unless it is explicity cancelled or dropped from the outside. We can think of this as a Task<!>, except with some nice convenience methods.
 pub struct Immortal(Task<Infallible>);

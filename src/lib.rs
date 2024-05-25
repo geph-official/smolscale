@@ -1,27 +1,19 @@
-//! A global, auto-scaling scheduler for [async-task] using work-balancing.
-//!
-//! ## What? Another executor?
-//!
-//! `smolscale` is a **work-balancing** executor based on [async-task], designed to be a drop-in replacement to `smol` and `async-global-executor`. It is designed based on the idea that work-stealing, the usual approach in async executors like `async-executor` and `tokio`, is not the right algorithm for scheduling huge amounts of tiny, interdependent work units, which are what message-passing futures end up being. Instead, `smolscale` uses *work-balancing*, an approach also found in Erlang, where a global "balancer" thread periodically instructs workers with no work to do to steal work from each other, but workers are not signalled to steal tasks from each other on every task scheduling. This avoids the extremely frequent stealing attempts that work-stealing schedulers generate when applied to async tasks.
-//!
-//! `smolscale`'s approach especially excels in two circumstances:
-//! - **When the CPU cores are not fully loaded**: Traditional work stealing optimizes for the case where most workers have work to do, which is only the case in fully-loaded scenarios. When workers often wake up and go back to sleep, however, a lot of CPU time is wasted stealing work. `smolscale` will instead drastically reduce CPU usage in these circumstances --- a `async-executor` app that takes 80% of CPU time may now take only 20%. Although this does not improve fully-loaded throughput, it significantly reduces power consumption and does increase throughput in circumstances where multiple thread pools compete for CPU time.
-//! - **When a lot of message-passing is happening**: Message-passing workloads often involve tasks quickly waking up and going back to sleep. In a work-stealing scheduler, this again floods the scheduler with stealing requests. `smolscale` can significantly improve throughput, especially compared to executors like `async-executor` that do not special-case message passing.
+#![doc = include_str!("../README.md")]
 
 use async_compat::CompatExt;
 use backtrace::Backtrace;
+use cfg_if::cfg_if;
 use dashmap::DashMap;
 use fastcounter::FastCounter;
 use futures_lite::prelude::*;
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::Lazy;
 use std::io::Write;
 use std::{
     io::stderr,
     pin::Pin,
-    sync::atomic::AtomicUsize,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        Arc, OnceLock,
     },
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -37,26 +29,33 @@ pub mod reaper;
 //const CHANGE_THRESH: u32 = 10;
 const MONITOR_MS: u64 = 10;
 
-const MAX_THREADS: usize = 1500;
-
-static POLL_COUNT: Lazy<FastCounter> = Lazy::new(Default::default);
+cfg_if! {
+    if #[cfg(feature = "preempt")] {
+        const MAX_THREADS: usize = 1500;
+        static POLL_COUNT: Lazy<FastCounter> = Lazy::new(Default::default);
+        static FUTURES_BEING_POLLED: Lazy<FastCounter> = Lazy::new(Default::default);
+    }
+}
 
 static THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-static MONITOR: OnceCell<std::thread::JoinHandle<()>> = OnceCell::new();
+static MONITOR: OnceLock<std::thread::JoinHandle<()>> = OnceLock::new();
 
-static SINGLE_THREAD: AtomicBool = AtomicBool::new(false);
+static SINGLE_THREAD: Lazy<AtomicBool> =
+    Lazy::new(|| AtomicBool::new(std::env::var("SMOLSCALE_SINGLE").is_ok()));
 
 static SMOLSCALE_USE_AGEX: Lazy<bool> = Lazy::new(|| std::env::var("SMOLSCALE_USE_AGEX").is_ok());
 
 static SMOLSCALE_PROFILE: Lazy<bool> = Lazy::new(|| std::env::var("SMOLSCALE_PROFILE").is_ok());
 
 /// Irrevocably puts smolscale into single-threaded mode.
+#[inline]
 pub fn permanently_single_threaded() {
     SINGLE_THREAD.store(true, Ordering::Relaxed);
 }
 
 /// Returns the number of running threads.
+#[inline]
 pub fn running_threads() -> usize {
     THREAD_COUNT.load(Ordering::Relaxed)
 }
@@ -66,7 +65,7 @@ fn start_monitor() {
         std::thread::Builder::new()
             .name("sscale-mon".into())
             .spawn(monitor_loop)
-            .unwrap()
+            .expect("Couldn't spawn MONITOR thread")
     });
 }
 
@@ -91,7 +90,7 @@ fn monitor_loop() {
                     scopeguard::defer!({
                         THREAD_COUNT.fetch_sub(1, Ordering::Relaxed);
                     });
-                    // let run_local = local_exec.run(futures_lite::future::pending::<()>());
+                    // let run_local = local_exec.run(std::future::pending());
                     if exitable {
                         new_executor::run_local_queue()
                             .or(async {
@@ -100,7 +99,7 @@ fn monitor_loop() {
                             .await;
                     } else {
                         new_executor::run_local_queue().await;
-                    };
+                    }
                 }
                 .compat();
                 if process_io {
@@ -111,7 +110,7 @@ fn monitor_loop() {
             })
             .expect("cannot spawn thread");
     }
-    if SINGLE_THREAD.load(Ordering::Relaxed) || std::env::var("SMOLSCALE_SINGLE").is_ok() {
+    if SINGLE_THREAD.load(Ordering::Relaxed) {
         start_thread(false, true);
         return;
     } else {
@@ -140,7 +139,7 @@ fn monitor_loop() {
             std::thread::sleep(Duration::from_millis(MONITOR_MS));
             let after_sleep = POLL_COUNT.count();
             let running_tasks = FUTURES_BEING_POLLED.count();
-            let running_threads = THREAD_COUNT.load(Ordering::Relaxed);
+            let running_threads = running_threads();
             if after_sleep == before_sleep
                 && running_threads <= MAX_THREADS
                 && token_bucket > 0
@@ -180,9 +179,8 @@ struct WrappedFuture<T, F: Future<Output = T>> {
 
 static ACTIVE_TASKS: Lazy<FastCounter> = Lazy::new(Default::default);
 
-static FUTURES_BEING_POLLED: Lazy<FastCounter> = Lazy::new(Default::default);
-
 /// Returns the current number of active tasks.
+#[inline]
 pub fn active_task_count() -> usize {
     ACTIVE_TASKS.count()
 }
@@ -202,11 +200,11 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         #[cfg(feature = "preempt")]
-        POLL_COUNT.incr();
-        #[cfg(feature = "preempt")]
-        FUTURES_BEING_POLLED.incr();
-        #[cfg(feature = "preempt")]
-        scopeguard::defer!(FUTURES_BEING_POLLED.decr());
+        {
+            POLL_COUNT.incr();
+            FUTURES_BEING_POLLED.incr();
+            scopeguard::defer!(FUTURES_BEING_POLLED.decr());
+        }
         let task_id = self.task_id;
         let btrace = self.spawn_btrace.as_ref().map(Arc::clone);
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };
@@ -263,7 +261,7 @@ static PROFILE_MAP: Lazy<DashMap<u64, (Arc<Backtrace>, Duration)>> = Lazy::new(|
                     &mut tw,
                     "{}\t{}\t{}\t{:?}\t{}",
                     count,
-                    ACTIVE_TASKS.count(),
+                    active_task_count(),
                     task_id,
                     duration,
                     {

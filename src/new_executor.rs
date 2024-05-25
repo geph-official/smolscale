@@ -1,11 +1,12 @@
 use std::{
     cell::{Cell, RefCell},
+    future::Future,
     rc::Rc,
 };
 
 use async_task::Runnable;
 use futures_intrusive::sync::LocalManualResetEvent;
-use futures_lite::{Future, FutureExt};
+use futures_lite::FutureExt;
 
 use crate::queues::{GlobalQueue, LocalQueue};
 

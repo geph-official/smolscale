@@ -7,7 +7,6 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use st3::fifo::{Stealer, Worker};
 use std::{
-    cell::RefCell,
     collections::VecDeque,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -15,6 +14,7 @@ use std::{
 /// The global task queue, also including handles for stealing from local queues.
 ///
 /// Tasks can be pushed to it. Popping requires first subscribing to it, producing a [LocalQueue], which then can be popped from.
+#[derive(Default)]
 pub struct GlobalQueue {
     queue: parking_lot::Mutex<VecDeque<Runnable>>,
     stealers: ShardedLock<FxHashMap<u64, Stealer<Runnable>>>,
@@ -24,13 +24,9 @@ pub struct GlobalQueue {
 
 impl GlobalQueue {
     /// Creates a new GlobalQueue.
+    #[inline]
     pub fn new() -> Self {
-        Self {
-            queue: Default::default(),
-            stealers: Default::default(),
-            id_ctr: AtomicU64::new(0),
-            event: Event::new(),
-        }
+        Self::default()
     }
 
     /// Pushes a task to the GlobalQueue, notifying at least one [LocalQueue].  
