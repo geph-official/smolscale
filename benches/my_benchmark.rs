@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::{future::Future};
+use std::future::Future;
 
 use async_executor::Task;
 use futures_lite::future;

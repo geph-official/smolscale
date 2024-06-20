@@ -28,11 +28,8 @@ pub async fn run_local_queue() {
                 r.run();
             }
 
+            // we only wait here because we want *idle* workers to be notified, not just anyone
             let evt = GLOBAL_QUEUE.wait();
-            // while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
-            //     r.run();
-            //     continue;
-            // }
             evt.await;
         }
         futures_lite::future::yield_now().await;

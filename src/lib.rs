@@ -35,7 +35,7 @@ mod queues;
 pub mod reaper;
 
 //const CHANGE_THRESH: u32 = 10;
-const MONITOR_MS: u64 = 10;
+const MONITOR_MS: u64 = 50;
 
 static THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -114,19 +114,16 @@ fn monitor_loop() {
         }
     }
 
-    // "Token bucket"
-    // loop {
-    //     new_executor::global_rebalance();
-    //     if SINGLE_THREAD.load(Ordering::Relaxed) {
-    //         return;
-    //     }
-    //     std::thread::sleep(Duration::from_millis(MONITOR_MS));
-    // }
+    // This loop here eventually "unstucks" the executor in the rare case that it gets stuck due to intentional use of "looser" synchronization than necessary
+    loop {
+        new_executor::global_rebalance();
+        std::thread::sleep(Duration::from_millis(MONITOR_MS));
+    }
 }
 
 /// Spawns a future onto the global executor and immediately blocks on it.`
 pub fn block_on<T: Send + 'static>(future: impl Future<Output = T> + Send + 'static) -> T {
-    async_io::block_on(WrappedFuture::new(future).compat())
+    async_io::block_on(future.compat())
 }
 
 /// Spawns a task onto the lazily-initialized global executor.
