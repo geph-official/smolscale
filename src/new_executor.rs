@@ -1,11 +1,7 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use std::cell::{Cell, RefCell};
 
 use async_task::Runnable;
-use futures_intrusive::sync::LocalManualResetEvent;
-use futures_lite::{Future, FutureExt};
+use futures_lite::Future;
 
 use crate::queues::{GlobalQueue, LocalQueue};
 
@@ -16,9 +12,9 @@ thread_local! {
     static LOCAL_QUEUE: LocalQueue<'static> = GLOBAL_QUEUE.subscribe();
 
 
-    static LOCAL_QUEUE_ACTIVE: Cell<bool> = Cell::new(false);
+    static LOCAL_QUEUE_ACTIVE: Cell<bool> = const { Cell::new(false) };
 
-    static LOCAL_QUEUE_HOLDING: RefCell<Vec<Runnable>> = RefCell::new(vec![]);
+    static LOCAL_QUEUE_HOLDING: RefCell<Vec<Runnable>> = const { RefCell::new(vec![]) };
 }
 
 /// Runs a queue
@@ -27,13 +23,16 @@ pub async fn run_local_queue() {
     scopeguard::defer!(LOCAL_QUEUE_ACTIVE.with(|r| r.set(false)));
     loop {
         for _ in 0..200 {
-            {
-                while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
-                    GLOBAL_QUEUE.notify();
-                    r.run();
-                }
+            while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
+                GLOBAL_QUEUE.notify();
+                r.run();
             }
+
             let evt = GLOBAL_QUEUE.wait();
+            // while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
+            //     r.run();
+            //     continue;
+            // }
             evt.await;
         }
         futures_lite::future::yield_now().await;

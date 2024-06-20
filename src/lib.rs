@@ -138,7 +138,7 @@ pub fn spawn<T: Send + 'static>(
     if *SMOLSCALE_USE_AGEX {
         async_global_executor::spawn(future)
     } else {
-        new_executor::spawn(WrappedFuture::new(future))
+        new_executor::spawn(future)
     }
 }
 
@@ -170,7 +170,7 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let task_id = self.task_id;
-        let btrace = self.spawn_btrace.as_ref().map(Arc::clone);
+        let btrace = self.spawn_btrace.clone();
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };
         if *SMOLSCALE_PROFILE && fastrand::u64(0..100) == 0 {
             let start = Instant::now();

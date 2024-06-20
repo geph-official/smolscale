@@ -1,8 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-
-
-
 /// A write-mostly, read-rarely counter
 #[derive(Default, Debug)]
 pub struct FastCounter {

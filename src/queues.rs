@@ -7,11 +7,7 @@ use event_listener::{Event, EventListener};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use st3::fifo::{Stealer, Worker};
-use std::{
-    cell::RefCell,
-    collections::VecDeque,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The global task queue, also including handles for stealing from local queues.
 ///
@@ -122,9 +118,7 @@ impl<'a> LocalQueue<'a> {
         // try stealing from the global
         // let mut global = self.global.queue.lock();
         let global_len = self.global.queue.len();
-        let to_steal = (self.global.queue.len() / 2 + 1)
-            .min(64)
-            .min(self.global.queue.len());
+        let to_steal = (global_len / 2 + 1).min(64).min(global_len);
         log::debug!("{} stole {} from global", self.id, to_steal);
         for _ in 0..to_steal {
             if let Some(stolen) = self.global.queue.pop() {

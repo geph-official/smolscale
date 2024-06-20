@@ -9,6 +9,12 @@ pub struct TaskReaper<T> {
     _reaper: Task<()>,
 }
 
+impl<T: Send + 'static> Default for TaskReaper<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Send + 'static> TaskReaper<T> {
     /// Create a new reaper.
     pub fn new() -> Self {
