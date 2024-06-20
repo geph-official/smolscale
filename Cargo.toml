@@ -32,8 +32,8 @@ futures-intrusive = "0.4"
 # crossbeam-queue="0.3"
 thread_local="1"
 cache-padded="1"
-crossbeam-deque = "0.8.1"
-flume = "0.10.12"
+# crossbeam-deque = "0.8.1"
+# flume = "0.10.12"
 # stacker="0.1"
 # parking_lot = "0.11.1"
 async-global-executor={version="2", features=["async-io"]}
@@ -51,6 +51,7 @@ parking_lot = "0.12.1"
 futures-util = "0.3.25"
 async-channel = "1.5.1"
 async-compat = "0.2.3"
+async-event = "0.2.1"
 
 [profile.release]
 panic = "abort"
@@ -71,6 +72,3 @@ async-oneshot= "0.4.2"
 name = "my_benchmark"
 harness = false
 
-[features]
-# Defines a feature named `webp` that does not enable any other features.
-preempt = []

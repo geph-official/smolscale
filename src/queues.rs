@@ -1,5 +1,6 @@
 use async_task::Runnable;
 
+use crossbeam_queue::SegQueue;
 use crossbeam_utils::sync::ShardedLock;
 use event_listener::{Event, EventListener};
 
@@ -16,7 +17,7 @@ use std::{
 ///
 /// Tasks can be pushed to it. Popping requires first subscribing to it, producing a [LocalQueue], which then can be popped from.
 pub struct GlobalQueue {
-    queue: parking_lot::Mutex<VecDeque<Runnable>>,
+    queue: SegQueue<Runnable>,
     stealers: ShardedLock<FxHashMap<u64, Stealer<Runnable>>>,
     id_ctr: AtomicU64,
     event: Event,
@@ -33,9 +34,13 @@ impl GlobalQueue {
         }
     }
 
-    /// Pushes a task to the GlobalQueue, notifying at least one [LocalQueue].  
+    /// Pushes a task to the GlobalQueue.  
     pub fn push(&self, task: Runnable) {
-        self.queue.lock().push_back(task);
+        self.queue.push(task);
+    }
+
+    /// Notifies once.
+    pub fn notify(&self) {
         self.event.notify(1);
     }
 
@@ -46,7 +51,7 @@ impl GlobalQueue {
 
     /// Subscribes to tasks, returning a LocalQueue.
     pub fn subscribe(&self) -> LocalQueue<'_> {
-        let worker = Worker::<Runnable>::new(1024);
+        let worker = Worker::<Runnable>::new(8192);
         let id = self.id_ctr.fetch_add(1, Ordering::Relaxed);
         self.stealers.write().unwrap().insert(id, worker.stealer());
 
@@ -91,7 +96,7 @@ impl<'a> LocalQueue<'a> {
     /// Pushes an item to the local queue, falling back to the global queue if the local queue is full.
     pub fn push(&self, runnable: Runnable) {
         if let Err(runnable) = self.local.push(runnable) {
-            log::trace!("{} pushed globally", self.id);
+            log::trace!("{} pushed globally due to overflow", self.id);
             self.global.push(runnable);
         } else {
             log::trace!("{} pushed locally", self.id);
@@ -108,23 +113,26 @@ impl<'a> LocalQueue<'a> {
                 if let Ok((val, count)) =
                     stealers[&id].steal_and_pop(&self.local, |n| (n / 2 + 1).min(64))
                 {
-                    log::trace!("{} stole {} from {id}", count + 1, self.id);
+                    log::debug!("{} stole {} from {}", self.id, count, id);
                     return Some(val);
                 }
             }
         }
 
         // try stealing from the global
-        if let Some(mut global) = self.global.queue.try_lock() {
-            let to_steal = (global.len() / 2 + 1).min(64).min(global.len());
-            for _ in 0..to_steal {
-                let stolen = global.pop_front().unwrap();
+        // let mut global = self.global.queue.lock();
+        let global_len = self.global.queue.len();
+        let to_steal = (self.global.queue.len() / 2 + 1)
+            .min(64)
+            .min(self.global.queue.len());
+        log::debug!("{} stole {} from global", self.id, to_steal);
+        for _ in 0..to_steal {
+            if let Some(stolen) = self.global.queue.pop() {
                 if let Err(back) = self.local.push(stolen) {
                     return Some(back);
                 }
             }
-            return self.local.pop();
         }
-        None
+        self.local.pop()
     }
 }

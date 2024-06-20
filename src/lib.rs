@@ -37,10 +37,6 @@ pub mod reaper;
 //const CHANGE_THRESH: u32 = 10;
 const MONITOR_MS: u64 = 10;
 
-const MAX_THREADS: usize = 1500;
-
-static POLL_COUNT: Lazy<FastCounter> = Lazy::new(Default::default);
-
 static THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 static MONITOR: OnceCell<std::thread::JoinHandle<()>> = OnceCell::new();
@@ -86,7 +82,6 @@ fn monitor_loop() {
                 .into(),
             )
             .spawn(move || {
-                // let local_exec = LEXEC.with(|v| Rc::clone(v));
                 let future = async {
                     scopeguard::defer!({
                         THREAD_COUNT.fetch_sub(1, Ordering::Relaxed);
@@ -112,8 +107,7 @@ fn monitor_loop() {
             .expect("cannot spawn thread");
     }
     if SINGLE_THREAD.load(Ordering::Relaxed) || std::env::var("SMOLSCALE_SINGLE").is_ok() {
-        start_thread(false, true);
-        return;
+        start_thread(false, true)
     } else {
         for _ in 0..num_cpus::get() {
             start_thread(false, true);
@@ -121,37 +115,13 @@ fn monitor_loop() {
     }
 
     // "Token bucket"
-    let mut token_bucket = 100;
-    for count in 0u64.. {
-        if count % 100 == 0 && token_bucket < 100 {
-            token_bucket += 1
-        }
-        new_executor::global_rebalance();
-        if SINGLE_THREAD.load(Ordering::Relaxed) {
-            return;
-        }
-        #[cfg(not(feature = "preempt"))]
-        {
-            std::thread::sleep(Duration::from_millis(MONITOR_MS));
-        }
-        #[cfg(feature = "preempt")]
-        {
-            let before_sleep = POLL_COUNT.count();
-            std::thread::sleep(Duration::from_millis(MONITOR_MS));
-            let after_sleep = POLL_COUNT.count();
-            let running_tasks = FUTURES_BEING_POLLED.count();
-            let running_threads = THREAD_COUNT.load(Ordering::Relaxed);
-            if after_sleep == before_sleep
-                && running_threads <= MAX_THREADS
-                && token_bucket > 0
-                && running_tasks >= running_threads
-            {
-                start_thread(true, false);
-                token_bucket -= 1;
-            }
-        }
-    }
-    unreachable!()
+    // loop {
+    //     new_executor::global_rebalance();
+    //     if SINGLE_THREAD.load(Ordering::Relaxed) {
+    //         return;
+    //     }
+    //     std::thread::sleep(Duration::from_millis(MONITOR_MS));
+    // }
 }
 
 /// Spawns a future onto the global executor and immediately blocks on it.`
@@ -164,7 +134,7 @@ pub fn spawn<T: Send + 'static>(
     future: impl Future<Output = T> + Send + 'static,
 ) -> async_executor::Task<T> {
     start_monitor();
-    log::trace!("monitor started");
+
     if *SMOLSCALE_USE_AGEX {
         async_global_executor::spawn(future)
     } else {
@@ -179,8 +149,6 @@ struct WrappedFuture<T, F: Future<Output = T>> {
 }
 
 static ACTIVE_TASKS: Lazy<FastCounter> = Lazy::new(Default::default);
-
-static FUTURES_BEING_POLLED: Lazy<FastCounter> = Lazy::new(Default::default);
 
 /// Returns the current number of active tasks.
 pub fn active_task_count() -> usize {
@@ -201,12 +169,6 @@ impl<T, F: Future<Output = T>> Future for WrappedFuture<T, F> {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        #[cfg(feature = "preempt")]
-        POLL_COUNT.incr();
-        #[cfg(feature = "preempt")]
-        FUTURES_BEING_POLLED.incr();
-        #[cfg(feature = "preempt")]
-        scopeguard::defer!(FUTURES_BEING_POLLED.decr());
         let task_id = self.task_id;
         let btrace = self.spawn_btrace.as_ref().map(Arc::clone);
         let fut = unsafe { self.map_unchecked_mut(|v| &mut v.fut) };

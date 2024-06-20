@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::future::Future;
+use std::{future::Future, time::Instant};
 
 use async_executor::Task;
 use futures_lite::future;
@@ -30,6 +30,7 @@ fn spawn_many(b: &mut criterion::Bencher) {
             for task in tasks {
                 task.await;
             }
+            // eprintln!("light tasks done");
         });
     });
 }
@@ -140,6 +141,14 @@ fn context_switch_quiet(b: &mut criterion::Bencher) {
     });
 }
 
+fn slow_fibonacci(n: u64) -> u64 {
+    if n <= 1 {
+        n
+    } else {
+        slow_fibonacci(n - 1) + slow_fibonacci(n - 2)
+    }
+}
+
 fn context_switch_busy(b: &mut criterion::Bencher) {
     let (send, mut recv) = async_channel::bounded::<usize>(1);
     let mut tasks: Vec<Task<Option<()>>> = vec![];
@@ -157,6 +166,7 @@ fn context_switch_busy(b: &mut criterion::Bencher) {
     for _ in 0..TASKS {
         tasks.push(spawn(async move {
             loop {
+                // slow_fibonacci(10);
                 future::yield_now().await;
             }
         }))
