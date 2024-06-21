@@ -58,5 +58,5 @@ where
 
 /// Globally rebalance.
 pub fn global_rebalance() {
-    GLOBAL_QUEUE.rebalance();
+    GLOBAL_QUEUE.notify();
 }
