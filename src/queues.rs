@@ -37,7 +37,7 @@ impl GlobalQueue {
 
     /// Notifies once.
     pub fn notify(&self) {
-        self.event.notify_relaxed(1);
+        self.event.notify(1);
     }
 
     /// Subscribes to tasks, returning a LocalQueue.

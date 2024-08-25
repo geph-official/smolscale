@@ -21,18 +21,27 @@ thread_local! {
 pub async fn run_local_queue() {
     LOCAL_QUEUE_ACTIVE.with(|r| r.set(true));
     scopeguard::defer!(LOCAL_QUEUE_ACTIVE.with(|r| r.set(false)));
+    let mut ctr = 0u32;
     loop {
-        for _ in 0..200 {
-            while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
-                GLOBAL_QUEUE.notify();
-                r.run();
+        while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
+            r.run();
+            ctr = ctr.wrapping_add(1);
+            if ctr % 64 == 0 {
+                futures_lite::future::yield_now().await;
             }
-
-            // we only wait here because we want *idle* workers to be notified, not just anyone
-            let evt = GLOBAL_QUEUE.wait();
-            evt.await;
         }
-        futures_lite::future::yield_now().await;
+
+        // we only wait here because we want *idle* workers to be notified, not just anyone
+        let evt = GLOBAL_QUEUE.wait();
+        // if we missed anything we should run them
+        while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
+            r.run();
+            ctr = ctr.wrapping_add(1);
+            if ctr % 64 == 0 {
+                futures_lite::future::yield_now().await;
+            }
+        }
+        evt.await;
     }
 }
 
