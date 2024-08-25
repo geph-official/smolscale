@@ -35,11 +35,6 @@ impl GlobalQueue {
         self.queue.push(task);
     }
 
-    /// Notifies once.
-    pub fn notify(&self) {
-        self.event.notify(1);
-    }
-
     /// Subscribes to tasks, returning a LocalQueue.
     pub fn subscribe(&self) -> LocalQueue<'_> {
         let worker = Worker::<Runnable>::new(8192);
@@ -51,11 +46,6 @@ impl GlobalQueue {
             global: self,
             local: worker,
         }
-    }
-
-    /// Wait for activity
-    pub fn wait(&self) -> EventListener {
-        self.event.listen()
     }
 }
 
@@ -81,7 +71,11 @@ impl<'a> Drop for LocalQueue<'a> {
 impl<'a> LocalQueue<'a> {
     /// Pops a task from the local queue, other local queues, or the global queue.
     pub fn pop(&self) -> Option<Runnable> {
-        self.local.pop().or_else(|| self.steal_and_pop())
+        if fastrand::u16(..128) == 0 {
+            self.steal_and_pop()
+        } else {
+            self.local.pop().or_else(|| self.steal_and_pop())
+        }
     }
 
     /// Pushes an item to the local queue, falling back to the global queue if the local queue is full.

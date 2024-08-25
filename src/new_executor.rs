@@ -8,6 +8,9 @@ use crate::queues::{GlobalQueue, LocalQueue};
 static GLOBAL_QUEUE: once_cell::sync::Lazy<GlobalQueue> =
     once_cell::sync::Lazy::new(GlobalQueue::new);
 
+static GLOBAL_QUEUE_EVT: once_cell::sync::Lazy<async_event::Event> =
+    once_cell::sync::Lazy::new(async_event::Event::new);
+
 thread_local! {
     static LOCAL_QUEUE: LocalQueue<'static> = GLOBAL_QUEUE.subscribe();
 
@@ -21,28 +24,14 @@ thread_local! {
 pub async fn run_local_queue() {
     LOCAL_QUEUE_ACTIVE.with(|r| r.set(true));
     scopeguard::defer!(LOCAL_QUEUE_ACTIVE.with(|r| r.set(false)));
-    let mut ctr = 0u32;
     loop {
-        while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
-            r.run();
-            GLOBAL_QUEUE.notify();
-            ctr = ctr.wrapping_add(1);
-            if ctr % 64 == 0 {
-                futures_lite::future::yield_now().await;
-            }
+        for _ in 0..200 {
+            let runnable = GLOBAL_QUEUE_EVT
+                .wait_until(|| LOCAL_QUEUE.with(|q| q.pop()))
+                .await;
+            runnable.run();
         }
-
-        // we only wait here because we want *idle* workers to be notified, not just anyone
-        let evt = GLOBAL_QUEUE.wait();
-        // if we missed anything we should run them
-        while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
-            r.run();
-            ctr = ctr.wrapping_add(1);
-            if ctr % 64 == 0 {
-                futures_lite::future::yield_now().await;
-            }
-        }
-        evt.await;
+        futures_lite::future::yield_now().await;
     }
 }
 
@@ -60,7 +49,7 @@ where
             log::trace!("pushed to local queue");
             LOCAL_QUEUE.with(|lq| lq.push(runnable));
         }
-        GLOBAL_QUEUE.notify();
+        GLOBAL_QUEUE_EVT.notify(1);
     });
     runnable.schedule();
     task
@@ -68,5 +57,5 @@ where
 
 /// Globally rebalance.
 pub fn global_rebalance() {
-    GLOBAL_QUEUE.notify();
+    GLOBAL_QUEUE_EVT.notify(1);
 }
