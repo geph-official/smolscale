@@ -25,6 +25,7 @@ pub async fn run_local_queue() {
     loop {
         while let Some(r) = LOCAL_QUEUE.with(|q| q.pop()) {
             r.run();
+            GLOBAL_QUEUE.notify();
             ctr = ctr.wrapping_add(1);
             if ctr % 64 == 0 {
                 futures_lite::future::yield_now().await;
