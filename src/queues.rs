@@ -71,20 +71,18 @@ impl<'a> Drop for LocalQueue<'a> {
 impl<'a> LocalQueue<'a> {
     /// Pops a task from the local queue, other local queues, or the global queue.
     pub fn pop(&self) -> Option<Runnable> {
-        if fastrand::u16(..128) == 0 {
-            self.steal_and_pop()
-        } else {
-            self.local.pop().or_else(|| self.steal_and_pop())
-        }
+        self.local.pop().or_else(|| self.steal_and_pop())
     }
 
     /// Pushes an item to the local queue, falling back to the global queue if the local queue is full.
-    pub fn push(&self, runnable: Runnable) {
+    pub fn push(&self, runnable: Runnable) -> bool {
         if let Err(runnable) = self.local.push(runnable) {
             log::trace!("{} pushed globally due to overflow", self.id);
             self.global.push(runnable);
+            true
         } else {
             log::trace!("{} pushed locally", self.id);
+            false
         }
     }
 

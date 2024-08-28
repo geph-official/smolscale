@@ -1,38 +1,62 @@
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell},
+    sync::{atomic::AtomicUsize, Arc},
+    task::Poll,
+};
 
 use async_task::Runnable;
+use crossbeam_queue::SegQueue;
+use diatomic_waker::WakeSink;
 use futures_lite::Future;
+use futures_util::future::poll_fn;
+use st3::fifo::Worker;
 
-use crate::queues::{GlobalQueue, LocalQueue};
+use crate::{
+    pool_manager::PoolManager,
+    queues::{GlobalQueue, LocalQueue},
+};
 
-static GLOBAL_QUEUE: once_cell::sync::Lazy<GlobalQueue> =
-    once_cell::sync::Lazy::new(GlobalQueue::new);
+/// A local worker with access to global executor resources.
+pub(crate) struct WorkThread {
+    local_queue: Worker<Runnable>,
+    fast_slot: Cell<Option<Runnable>>,
+    executor_context: Arc<ExecutorContext>,
+}
 
-static GLOBAL_QUEUE_EVT: once_cell::sync::Lazy<async_event::Event> =
-    once_cell::sync::Lazy::new(async_event::Event::new);
+impl WorkThread {
+    async fn run(&self, id: usize, mut parker: WakeSink) {
+        let pool_manager = &self.executor_context.pool_manager;
+        let injector = &self.executor_context.injector;
+        let local_queue = &self.local_queue;
+        let fast_slot = &self.fast_slot;
 
-thread_local! {
-    static LOCAL_QUEUE: LocalQueue<'static> = GLOBAL_QUEUE.subscribe();
+        let mut wake_registered = false;
 
+        loop {
+            if pool_manager.try_set_worker_inactive(id) {
+                poll_fn(|cx| {
+                    if wake_registered {
+                        parker.unregister();
+                        Poll::Ready(())
+                    } else {
+                        parker.register(cx.waker());
+                        Poll::Pending
+                    }
+                })
+                .await;
+            }
+        }
+    }
+}
 
-    static LOCAL_QUEUE_ACTIVE: Cell<bool> = const { Cell::new(false) };
-
-    static LOCAL_QUEUE_HOLDING: RefCell<Vec<Runnable>> = const { RefCell::new(vec![]) };
+struct ExecutorContext {
+    injector: SegQueue<Runnable>,
+    pool_manager: PoolManager,
 }
 
 /// Runs a queue
 pub async fn run_local_queue() {
-    LOCAL_QUEUE_ACTIVE.with(|r| r.set(true));
-    scopeguard::defer!(LOCAL_QUEUE_ACTIVE.with(|r| r.set(false)));
-    loop {
-        for _ in 0..200 {
-            let runnable = GLOBAL_QUEUE_EVT
-                .wait_until(|| LOCAL_QUEUE.with(|q| q.pop()))
-                .await;
-            runnable.run();
-        }
-        futures_lite::future::yield_now().await;
-    }
+    todo!()
 }
 
 /// Spawns a task
@@ -41,21 +65,18 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    let (runnable, task) = async_task::spawn(future, |runnable| {
-        if fastrand::u8(..) == 0 {
-            log::trace!("pushed to global queue");
-            GLOBAL_QUEUE.push(runnable);
-        } else {
-            log::trace!("pushed to local queue");
-            LOCAL_QUEUE.with(|lq| lq.push(runnable));
-        }
-        GLOBAL_QUEUE_EVT.notify(1);
-    });
-    runnable.schedule();
-    task
-}
-
-/// Globally rebalance.
-pub fn global_rebalance() {
-    GLOBAL_QUEUE_EVT.notify(1);
+    todo!()
+    // let (runnable, task) = async_task::spawn(future, |runnable| {
+    //     if LOCAL_QUEUE_ACTIVE.with(|r| r.get()) {
+    //         let went_to_global = LOCAL_QUEUE.with(|lq| lq.push(runnable));
+    //         if went_to_global {
+    //             GLOBAL_QUEUE_EVT.notify(1);
+    //         }
+    //     } else {
+    //         GLOBAL_QUEUE.push(runnable);
+    //         GLOBAL_QUEUE_EVT.notify(1);
+    //     }
+    // });
+    // runnable.schedule();
+    // task
 }
