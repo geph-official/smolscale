@@ -1,39 +1,22 @@
-use std::cell::{Cell, RefCell};
+use std::thread::available_parallelism;
 
-use async_task::Runnable;
 use futures_lite::Future;
+use once_cell::sync::Lazy;
 
-use crate::queues::{GlobalQueue, LocalQueue};
+use crate::{thread::ExecutorThread, SINGLE_THREAD};
 
-static GLOBAL_QUEUE: once_cell::sync::Lazy<GlobalQueue> =
-    once_cell::sync::Lazy::new(GlobalQueue::new);
-
-static GLOBAL_QUEUE_EVT: once_cell::sync::Lazy<async_event::Event> =
-    once_cell::sync::Lazy::new(async_event::Event::new);
-
-thread_local! {
-    static LOCAL_QUEUE: LocalQueue<'static> = GLOBAL_QUEUE.subscribe();
-
-
-    static LOCAL_QUEUE_ACTIVE: Cell<bool> = const { Cell::new(false) };
-
-    static LOCAL_QUEUE_HOLDING: RefCell<Vec<Runnable>> = const { RefCell::new(vec![]) };
-}
-
-/// Runs a queue
-pub async fn run_local_queue() {
-    LOCAL_QUEUE_ACTIVE.with(|r| r.set(true));
-    scopeguard::defer!(LOCAL_QUEUE_ACTIVE.with(|r| r.set(false)));
-    loop {
-        for _ in 0..200 {
-            let runnable = GLOBAL_QUEUE_EVT
-                .wait_until(|| LOCAL_QUEUE.with(|q| q.pop()))
-                .await;
-            runnable.run();
-        }
-        futures_lite::future::yield_now().await;
+static THREADS: Lazy<Vec<ExecutorThread>> = Lazy::new(|| {
+    let thread_count = if SINGLE_THREAD.load(std::sync::atomic::Ordering::Relaxed) {
+        1
+    } else {
+        available_parallelism().unwrap().get()
+    };
+    let mut threads = Vec::new();
+    for _ in 0..thread_count {
+        threads.push(ExecutorThread::new());
     }
-}
+    threads
+});
 
 /// Spawns a task
 pub fn spawn<F>(future: F) -> async_task::Task<F::Output>
@@ -41,21 +24,10 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    let (runnable, task) = async_task::spawn(future, |runnable| {
-        if fastrand::u8(..) == 0 {
-            log::trace!("pushed to global queue");
-            GLOBAL_QUEUE.push(runnable);
-        } else {
-            log::trace!("pushed to local queue");
-            LOCAL_QUEUE.with(|lq| lq.push(runnable));
-        }
-        GLOBAL_QUEUE_EVT.notify(1);
+    let thread_id = fastrand::usize(..THREADS.len());
+    let (runnable, task) = async_task::spawn(future, move |runnable| {
+        THREADS[thread_id].schedule(runnable);
     });
     runnable.schedule();
     task
-}
-
-/// Globally rebalance.
-pub fn global_rebalance() {
-    GLOBAL_QUEUE_EVT.notify(1);
 }
