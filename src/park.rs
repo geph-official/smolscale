@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use diatomic_waker::WakeSink;
+use diatomic_waker::{WakeSink, WakeSource};
 
 pub struct Parker {
     flag: Arc<AtomicBool>,
@@ -28,5 +28,25 @@ impl Parker {
                 }
             })
             .await
+    }
+
+    pub fn unparker(&self) -> Unparker {
+        Unparker {
+            flag: self.flag.clone(),
+            send: self.recv.source(),
+        }
+    }
+}
+
+pub struct Unparker {
+    flag: Arc<AtomicBool>,
+    send: WakeSource,
+}
+
+impl Unparker {
+    pub fn unpark(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+        std::sync::atomic::fence(Ordering::SeqCst);
+        self.send.notify();
     }
 }

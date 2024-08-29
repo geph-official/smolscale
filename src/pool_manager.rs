@@ -1,6 +1,7 @@
 use crate::bit;
 use async_task::Runnable;
 
+use crossbeam_utils::sync::Unparker;
 use diatomic_waker::WakeSource;
 use st3::fifo::Stealer;
 use std::any::Any;
@@ -16,7 +17,7 @@ pub(super) struct PoolManager {
     /// List of the stealers associated to each worker thread.
     stealers: Box<[Stealer<Runnable>]>,
     /// List of the thread unparkers associated to each worker thread.
-    worker_unparkers: Box<[WakeSource]>,
+    worker_unparkers: Box<[Unparker]>,
     /// Bit field of all workers that are currently unparked.
     active_workers: AtomicUsize,
     /// Count of all workers currently searching for tasks.
@@ -37,7 +38,7 @@ impl PoolManager {
     pub(super) fn new(
         pool_size: usize,
         stealers: Box<[Stealer<Runnable>]>,
-        worker_unparkers: Box<[WakeSource]>,
+        worker_unparkers: Box<[Unparker]>,
     ) -> Self {
         assert!(
             pool_size >= 1,
@@ -80,7 +81,7 @@ impl PoolManager {
                 .fetch_or(1 << first_idle_worker, Ordering::Relaxed);
             if active_workers & (1 << first_idle_worker) == 0 {
                 self.begin_worker_search();
-                self.worker_unparkers[first_idle_worker].notify();
+                self.worker_unparkers[first_idle_worker].unpark();
                 return;
             }
         }
@@ -110,7 +111,7 @@ impl PoolManager {
                     .fetch_or(1 << first_idle_worker, Ordering::Relaxed);
                 if active_workers & (1 << first_idle_worker) == 0 {
                     self.begin_worker_search();
-                    self.worker_unparkers[first_idle_worker].notify();
+                    self.worker_unparkers[first_idle_worker].unpark();
                     return;
                 }
             }
@@ -129,6 +130,7 @@ impl PoolManager {
     /// `set_all_workers_inactive` if it can confirm that the injector queue is
     /// empty.
     pub(super) fn try_set_worker_inactive(&self, worker_id: usize) -> bool {
+        eprintln!("setting worker {worker_id} inactive");
         // Ordering: this Release operation synchronizes with the Acquire fence
         // in the below conditional if this is is the last active worker, and/or
         // with the Acquire state load in the `pool_state` method.
@@ -145,6 +147,8 @@ impl PoolManager {
                 }
             })
             .unwrap();
+
+        eprintln!("current status: {:032b}", active_workers);
 
         assert_ne!(active_workers & (1 << worker_id), 0);
 
@@ -217,7 +221,7 @@ impl PoolManager {
 
         self.set_all_workers_active();
         for unparker in &*self.worker_unparkers {
-            unparker.notify();
+            unparker.unpark();
         }
     }
 
