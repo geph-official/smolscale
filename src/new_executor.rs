@@ -33,24 +33,26 @@ impl WorkThread {
         let fast_slot = &self.fast_slot;
 
         loop {
-            if pool_manager.try_set_worker_inactive(id) {
-                parker.park();
-            } else if injector.is_empty() {
-                // This worker could not be deactivated because it was the last
-                // active worker. In such case, the call to
-                // `try_set_worker_inactive` establishes a synchronization with
-                // all threads that pushed tasks to the injector queue but could
-                // not activate a new worker, which is why some tasks may now be
-                // visible in the injector queue.
-                pool_manager.set_all_workers_inactive();
+            pool_manager.set_worker_inactive(id);
+            parker.park();
+            // if pool_manager.try_set_worker_inactive(id) {
+            //     parker.park();
+            // } else if injector.is_empty() {
+            //     // This worker could not be deactivated because it was the last
+            //     // active worker. In such case, the call to
+            //     // `try_set_worker_inactive` establishes a synchronization with
+            //     // all threads that pushed tasks to the injector queue but could
+            //     // not activate a new worker, which is why some tasks may now be
+            //     // visible in the injector queue.
+            //     pool_manager.set_all_workers_inactive();
 
-                parker.park();
-                // No need to call `begin_worker_search()`: this was done by the
-                // thread that unparked the worker.
-            } else {
-                eprintln!("*********** WEIRD SITUATION HERE ************");
-                pool_manager.begin_worker_search();
-            }
+            //     parker.park();
+            //     // No need to call `begin_worker_search()`: this was done by the
+            //     // thread that unparked the worker.
+            // } else {
+            //     eprintln!("*********** WEIRD SITUATION HERE ************");
+            //     pool_manager.begin_worker_search();
+            // }
 
             let mut search_start = Instant::now();
             loop {

@@ -118,6 +118,11 @@ impl PoolManager {
         }
     }
 
+    pub fn set_worker_inactive(&self, worker_id: usize) {
+        self.active_workers
+            .fetch_and(!(1 << worker_id), Ordering::Relaxed);
+    }
+
     /// Marks the specified worker as inactive unless it is the last active
     /// worker.
     ///
