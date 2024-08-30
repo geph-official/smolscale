@@ -50,7 +50,6 @@ impl WorkThread {
                 // No need to call `begin_worker_search()`: this was done by the
                 // thread that unparked the worker.
             } else {
-                eprintln!("*********** WEIRD SITUATION HERE ************");
                 pool_manager.begin_worker_search();
             }
 
