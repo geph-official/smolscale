@@ -16,6 +16,7 @@ thread_local! {
 
 
     static LOCAL_QUEUE_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static LOCAL_QUEUE_RUNNING: Cell<bool> = const { Cell::new(false) };
 
     static LOCAL_QUEUE_HOLDING: RefCell<Vec<Runnable>> = const { RefCell::new(vec![]) };
 }
@@ -29,7 +30,9 @@ pub async fn run_local_queue() {
             let runnable = GLOBAL_QUEUE_EVT
                 .wait_until(|| LOCAL_QUEUE.with(|q| q.pop()))
                 .await;
+            LOCAL_QUEUE_RUNNING.with(|r| r.set(true));
             runnable.run();
+            LOCAL_QUEUE_RUNNING.with(|r| r.set(false));
         }
         futures_lite::future::yield_now().await;
     }
@@ -42,14 +45,16 @@ where
     F::Output: Send + 'static,
 {
     let (runnable, task) = async_task::spawn(future, |runnable| {
-        if fastrand::u8(..) == 0 {
+        if fastrand::u8(..) == 0 || !LOCAL_QUEUE_ACTIVE.get() {
             log::trace!("pushed to global queue");
             GLOBAL_QUEUE.push(runnable);
         } else {
             log::trace!("pushed to local queue");
             LOCAL_QUEUE.with(|lq| lq.push(runnable));
         }
-        GLOBAL_QUEUE_EVT.notify(1);
+        if !LOCAL_QUEUE_RUNNING.get() {
+            GLOBAL_QUEUE_EVT.notify(1);
+        }
     });
     runnable.schedule();
     task

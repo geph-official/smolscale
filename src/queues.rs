@@ -2,12 +2,14 @@ use async_task::Runnable;
 
 use crossbeam_queue::SegQueue;
 use crossbeam_utils::sync::ShardedLock;
-use event_listener::Event;
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use st3::lifo::{Stealer, Worker};
-use std::sync::atomic::{AtomicU64, Ordering};
+use st3::fifo::{Stealer, Worker};
+use std::{
+    cell::RefCell,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 /// The global task queue, also including handles for stealing from local queues.
 ///
@@ -16,7 +18,6 @@ pub struct GlobalQueue {
     queue: SegQueue<Runnable>,
     stealers: ShardedLock<FxHashMap<u64, Stealer<Runnable>>>,
     id_ctr: AtomicU64,
-    event: Event,
 }
 
 impl GlobalQueue {
@@ -26,7 +27,6 @@ impl GlobalQueue {
             queue: Default::default(),
             stealers: Default::default(),
             id_ctr: AtomicU64::new(0),
-            event: Event::new(),
         }
     }
 
@@ -45,6 +45,7 @@ impl GlobalQueue {
             id,
             global: self,
             local: worker,
+            next_task: Default::default(),
         }
     }
 }
@@ -54,7 +55,7 @@ pub struct LocalQueue<'a> {
     id: u64,
     global: &'a GlobalQueue,
     local: Worker<Runnable>,
-    // next_task: RefCell<Option<Runnable>>,
+    next_task: RefCell<Option<Runnable>>,
 }
 
 impl<'a> Drop for LocalQueue<'a> {
@@ -71,20 +72,22 @@ impl<'a> Drop for LocalQueue<'a> {
 impl<'a> LocalQueue<'a> {
     /// Pops a task from the local queue, other local queues, or the global queue.
     pub fn pop(&self) -> Option<Runnable> {
-        if fastrand::u16(..128) == 0 {
-            self.steal_and_pop()
-        } else {
-            self.local.pop().or_else(|| self.steal_and_pop())
-        }
+        self.next_task
+            .borrow_mut()
+            .take()
+            .or_else(|| self.local.pop())
+            .or_else(|| self.steal_and_pop())
     }
 
     /// Pushes an item to the local queue, falling back to the global queue if the local queue is full.
     pub fn push(&self, runnable: Runnable) {
-        if let Err(runnable) = self.local.push(runnable) {
-            log::trace!("{} pushed globally due to overflow", self.id);
-            self.global.push(runnable);
-        } else {
-            log::trace!("{} pushed locally", self.id);
+        if let Some(runnable) = self.next_task.borrow_mut().replace(runnable) {
+            if let Err(runnable) = self.local.push(runnable) {
+                log::trace!("{} pushed globally", self.id);
+                self.global.push(runnable);
+            } else {
+                log::trace!("{} pushed locally", self.id);
+            }
         }
     }
 
