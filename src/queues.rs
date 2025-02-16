@@ -2,11 +2,11 @@ use async_task::Runnable;
 
 use crossbeam_queue::SegQueue;
 use crossbeam_utils::sync::ShardedLock;
-use event_listener::{Event, EventListener};
+use event_listener::Event;
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use st3::fifo::{Stealer, Worker};
+use st3::lifo::{Stealer, Worker};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The global task queue, also including handles for stealing from local queues.
