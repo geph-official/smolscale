@@ -26,15 +26,12 @@ pub async fn run_local_queue() {
     LOCAL_QUEUE_ACTIVE.with(|r| r.set(true));
     scopeguard::defer!(LOCAL_QUEUE_ACTIVE.with(|r| r.set(false)));
     loop {
-        for _ in 0..200 {
-            let runnable = GLOBAL_QUEUE_EVT
-                .wait_until(|| LOCAL_QUEUE.with(|q| q.pop()))
-                .await;
-            LOCAL_QUEUE_RUNNING.with(|r| r.set(true));
-            runnable.run();
-            LOCAL_QUEUE_RUNNING.with(|r| r.set(false));
-        }
-        futures_lite::future::yield_now().await;
+        let runnable = GLOBAL_QUEUE_EVT
+            .wait_until(|| LOCAL_QUEUE.with(|q| q.pop()))
+            .await;
+        LOCAL_QUEUE_RUNNING.with(|r| r.set(true));
+        runnable.run();
+        LOCAL_QUEUE_RUNNING.with(|r| r.set(false));
     }
 }
 

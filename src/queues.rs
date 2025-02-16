@@ -81,14 +81,14 @@ impl<'a> LocalQueue<'a> {
 
     /// Pushes an item to the local queue, falling back to the global queue if the local queue is full.
     pub fn push(&self, runnable: Runnable) {
-        if let Some(runnable) = self.next_task.borrow_mut().replace(runnable) {
-            if let Err(runnable) = self.local.push(runnable) {
-                log::trace!("{} pushed globally", self.id);
-                self.global.push(runnable);
-            } else {
-                log::trace!("{} pushed locally", self.id);
-            }
+        // if let Some(runnable) = self.next_task.borrow_mut().replace(runnable) {
+        if let Err(runnable) = self.local.push(runnable) {
+            log::trace!("{} pushed globally", self.id);
+            self.global.push(runnable);
+        } else {
+            log::trace!("{} pushed locally", self.id);
         }
+        // }
     }
 
     /// Steals a whole batch and pops one.
