@@ -115,10 +115,10 @@ fn monitor_loop() {
     }
 
     // This loop here eventually "unstucks" the executor in the rare case that it gets stuck due to intentional use of "looser" synchronization than necessary
-    // loop {
-    //     new_executor::global_rebalance();
-    //     std::thread::sleep(Duration::from_millis(MONITOR_MS));
-    // }
+    loop {
+        new_executor::global_rebalance();
+        std::thread::sleep(Duration::from_millis(MONITOR_MS));
+    }
 }
 
 /// Spawns a future onto the global executor and immediately blocks on it.`
