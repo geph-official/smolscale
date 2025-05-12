@@ -45,8 +45,6 @@ static SINGLE_THREAD: AtomicBool = AtomicBool::new(false);
 
 static SMOLSCALE_USE_AGEX: Lazy<bool> = Lazy::new(|| std::env::var("SMOLSCALE_USE_AGEX").is_ok());
 
-static SMOLSCALE_PROFILE: Lazy<bool> = Lazy::new(|| std::env::var("SMOLSCALE_PROFILE").is_ok());
-
 /// Irrevocably puts smolscale into single-threaded mode.
 pub fn permanently_single_threaded() {
     SINGLE_THREAD.store(true, Ordering::Relaxed);

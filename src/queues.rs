@@ -101,7 +101,7 @@ impl<'a> LocalQueue<'a> {
                 if let Ok((val, count)) =
                     stealers[&id].steal_and_pop(&self.local, |n| (n / 2 + 1).min(64))
                 {
-                    log::debug!("{} stole {} from {}", self.id, count, id);
+                    log::trace!("{} stole {} from {}", self.id, count, id);
                     return Some(val);
                 }
             }
@@ -111,7 +111,7 @@ impl<'a> LocalQueue<'a> {
         // let mut global = self.global.queue.lock();
         let global_len = self.global.queue.len();
         let to_steal = (global_len / 2 + 1).min(64).min(global_len);
-        log::debug!("{} stole {} from global", self.id, to_steal);
+        log::trace!("{} stole {} from global", self.id, to_steal);
         for _ in 0..to_steal {
             if let Some(stolen) = self.global.queue.pop() {
                 if let Err(back) = self.local.push(stolen) {
